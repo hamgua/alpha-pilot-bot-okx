@@ -206,10 +206,15 @@ class TimeHelper:
         return True
     
     @staticmethod
-    def get_time_until_next(interval_minutes: int = 5) -> float:
-        """获取到下个周期的时间"""
+    def get_time_until_next(interval_minutes: int = 15) -> float:
+        """获取到下个周期的时间
+        
+        支持15分钟循环周期，在每个整点的00、15、30、45分钟开始运行
+        """
         now = datetime.now()
         minutes = now.minute
+        
+        # 计算下一个15分钟间隔
         next_interval = ((minutes // interval_minutes) + 1) * interval_minutes
         
         if next_interval >= 60:
@@ -218,8 +223,30 @@ class TimeHelper:
         else:
             next_hour = now.hour
         
-        next_time = now.replace(hour=next_hour, minute=next_interval, second=0, microsecond=0)
-        return (next_time - now).total_seconds()
+        # 处理小时溢出
+        if next_hour >= 24:
+            next_hour = 0
+            next_day = now.day + 1
+            # 处理月份天数变化
+            try:
+                next_time = now.replace(day=next_day, hour=next_hour, minute=next_interval, second=0, microsecond=0)
+            except ValueError:
+                # 如果日期无效（如2月30日），则使用下个月的第一天
+                next_month = now.month + 1
+                next_year = now.year
+                if next_month > 12:
+                    next_month = 1
+                    next_year += 1
+                next_time = datetime(next_year, next_month, 1, next_hour, next_interval, 0, 0)
+        else:
+            try:
+                next_time = now.replace(hour=next_hour, minute=next_interval, second=0, microsecond=0)
+            except ValueError:
+                # 处理夏令时等特殊情况
+                next_time = now + timedelta(hours=1)
+                next_time = next_time.replace(minute=next_interval, second=0, microsecond=0)
+        
+        return max(0, (next_time - now).total_seconds())
 
 class LoggerHelper:
     """日志辅助类"""
@@ -293,7 +320,8 @@ class ErrorRecoveryManager:
     """异常恢复管理器"""
     
     def __init__(self):
-        self.config = config.get('system', 'error_recovery')
+        from config import config
+        self.config = config.get('system', 'error_recovery') or {}
         self.error_classifier = ErrorClassifier()
         self.recovery_strategies = {
             'network': self._handle_network_error,
@@ -604,8 +632,9 @@ class StatePersistence:
     """状态持久化管理器"""
     
     def __init__(self):
-        self.config = config.get('system', 'state_persistence')
-        self.state_dir = self.config.get('state_dir', '/app/data/state')
+        from config import config
+        self.config = config.get('system', 'state_persistence') or {}
+        self.state_dir = self.config.get('state_dir', './data/state')
         self.checkpoint_interval = self.config.get('checkpoint_interval', 300)  # 5分钟
         self.max_checkpoints = self.config.get('max_checkpoints', 10)
         
@@ -671,6 +700,12 @@ class RecoveryEngine:
     """恢复引擎"""
     
     def __init__(self):
+        from config import config
+        self.config = config.get('system', 'recovery') or {}
+        self.enabled = self.config.get('enabled', True)
+        self.max_retries = self.config.get('max_retries', 3)
+        self.retry_delay = self.config.get('retry_delay', 1)
+        self.backoff_factor = self.config.get('backoff_factor', 2.0)
         self.state_persistence = StatePersistence()
         self.error_recovery = ErrorRecoveryManager()
         self.checkpoint_manager = CheckpointManager()
@@ -701,8 +736,9 @@ class CheckpointManager:
     """检查点管理器"""
     
     def __init__(self):
-        self.config = config.get('system', 'checkpoint_manager')
-        self.checkpoint_dir = self.config.get('checkpoint_dir', '/app/data/checkpoints')
+        from config import config
+        self.config = config.get('system', 'checkpoint_manager') or {}
+        self.checkpoint_dir = self.config.get('checkpoint_dir', './data/checkpoints')
         self.max_checkpoints = self.config.get('max_checkpoints', 5)
         
         # 确保检查点目录存在

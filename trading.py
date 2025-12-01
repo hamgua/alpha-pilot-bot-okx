@@ -6,7 +6,7 @@ Alpha Arena OKX 交易逻辑模块
 import ccxt
 import time
 import json
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 
 from config import config

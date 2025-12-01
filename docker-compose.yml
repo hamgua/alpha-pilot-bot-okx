@@ -1,17 +1,17 @@
 services:
 
-  alpha-arena-okx:
-    image: hamgua/alpha-arena-okx:v4.4.16
-    container_name: alpha-arena-okx
+  alpha-pilot-bot-okx:
+    image: hamgua/alpha-pilot-bot-okx:v4.4.16
+    container_name: alpha-pilot-bot-okx
     restart: always
     ports:
       - "8501:8501"
     volumes:
       - /etc/localtime:/etc/localtime
-      - ./alpha-arena-okx/.env:/app/.env
-      - ./alpha-arena-okx/data:/app/data
-      - ./alpha-arena-okx/logs:/app/logs
-      - ./alpha-arena-okx/data_json:/app/data_json
+      - ./alpha-pilot-bot-okx/.env:/app/.env
+      - ./alpha-pilot-bot-okx/data:/app/data
+      - ./alpha-pilot-bot-okx/logs:/app/logs
+      - ./alpha-pilot-bot-okx/data_json:/app/data_json
     environment:
       # 时区上海
       TZ : Asia/Shanghai

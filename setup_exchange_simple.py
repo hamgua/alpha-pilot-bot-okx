@@ -1,3 +1,5 @@
+from logger_config import log_info, log_warning, log_error
+
 def setup_exchange():
     """设置交易所参数 - 极简版，仅设置持仓模式和杠杆"""
     try:

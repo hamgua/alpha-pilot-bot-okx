@@ -8,18 +8,7 @@ ENV TZ=Asia/Shanghai
 WORKDIR /app
 
 # 复制项目文件
-COPY run.py .
-COPY deepseekok2.py .
-COPY data_manager.py .
-COPY streamlit_app.py .
-COPY logger_config.py .
-COPY setup_logging.py .
-COPY trade_logger.py .
-COPY view_logs.py .
-COPY advanced_historical_analysis_optimization_report.py .
-COPY final_analysis.py .
-COPY .streamlit/ .streamlit/
-COPY requirements.txt .
+COPY . .
 
 # 创建数据目录
 RUN mkdir -p /app/data /app/logs /app/data_json

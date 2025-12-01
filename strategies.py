@@ -245,8 +245,8 @@ class RiskManager:
         final_tp_pct = max(min_tp_pct, min(max_tp_pct, base_tp_pct))
         
         # 盈利保护逻辑
-        final_sl_pct, final_tp_pct = self._apply_advanced_profit_protection(
-            final_sl_pct, final_tp_pct, position, current_price, market_state
+        final_sl_pct, final_tp_pct = self._apply_profit_protection(
+            final_sl_pct, final_tp_pct, position, current_price
         )
         
         # 计算最终价格
@@ -540,151 +540,249 @@ class ConsolidationDetector:
     
     def _check_profit_status(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> bool:
         """盈利状态检查"""
-        entry_price = position.get('entry_price', 0)
-        current_price = market_data.get('price', 0)
-        
-        if entry_price <= 0 or current_price <= 0:
+        try:
+            # 防御性检查
+            if not position or not market_data:
+                return False
+                
+            entry_price = position.get('entry_price', 0)
+            current_price = market_data.get('price', 0)
+            
+            if entry_price is None or current_price is None:
+                return False
+                
+            if entry_price <= 0 or current_price <= 0:
+                return False
+            
+            # 确保config存在
+            if not self.config:
+                return False
+                
+            profit_pct = abs(current_price - entry_price) / entry_price
+            min_profit = self.config.get('min_profit_pct', 0.005)
+            
+            meets_profit = profit_pct >= min_profit
+            
+            if meets_profit:
+                log_info(f"✅ 盈利检查通过: 当前盈利{profit_pct:.2%} ≥ 最小阈值{min_profit:.2%}")
+            
+            return meets_profit
+        except Exception as e:
+            log_warning(f"盈利状态检查异常: {e}")
             return False
-        
-        profit_pct = abs(current_price - entry_price) / entry_price
-        min_profit = self.config.get('min_profit_pct', 0.005)
-        
-        meets_profit = profit_pct >= min_profit
-        
-        if meets_profit:
-            log_info(f"✅ 盈利检查通过: 当前盈利{profit_pct:.2%} ≥ 最小阈值{min_profit:.2%}")
-        
-        return meets_profit
     
     def _analyze_volatility(self, price_history: Dict[str, list]) -> bool:
         """波动率计算与分析"""
-        prices = price_history.get('close', [])
-        if len(prices) < 6:
+        try:
+            if not price_history or not isinstance(price_history, dict):
+                return False
+                
+            prices = price_history.get('close', [])
+            if not isinstance(prices, list) or len(prices) < 6:
+                return False
+            
+            lookback_periods = self.config.get('lookback_periods', 6)
+            recent_prices = prices[-lookback_periods:]
+            
+            # 计算ATR
+            highs = price_history.get('high', [])
+            lows = price_history.get('low', [])
+            closes = price_history.get('close', [])
+            
+            if not all(isinstance(lst, list) for lst in [highs, lows, closes]):
+                return False
+                
+            highs = highs[-lookback_periods:]
+            lows = lows[-lookback_periods:]
+            closes = closes[-lookback_periods:]
+            
+            if len(highs) >= 2 and len(lows) >= 2 and len(closes) >= 2:
+                atr = self._calculate_atr(highs, lows, closes)
+                current_price = closes[-1]
+                volatility_pct = (atr / current_price) * 100
+                
+                # 自适应波动率调整
+                consolidation_threshold = self.config.get('consolidation_threshold', 0.008)
+                if self.config.get('volatility_adaptive', True):
+                    if volatility_pct < 1.0:
+                        consolidation_threshold *= 0.8  # 低波动环境更敏感
+                    elif volatility_pct > 3.0:
+                        consolidation_threshold *= 1.2  # 高波动环境更宽松
+                
+                meets_volatility = volatility_pct <= (consolidation_threshold * 100)
+                
+                if meets_volatility:
+                    log_info(f"✅ 波动率检查通过: 当前波动率{volatility_pct:.2f}% ≤ 阈值{consolidation_threshold*100:.2f}%")
+                
+                return meets_volatility
+            
             return False
-        
-        lookback_periods = self.config.get('lookback_periods', 6)
-        recent_prices = prices[-lookback_periods:]
-        
-        # 计算ATR
-        highs = price_history.get('high', [])[-lookback_periods:]
-        lows = price_history.get('low', [])[-lookback_periods:]
-        closes = price_history.get('close', [])[-lookback_periods:]
-        
-        if len(highs) >= 2 and len(lows) >= 2 and len(closes) >= 2:
-            atr = self._calculate_atr(highs, lows, closes)
-            current_price = closes[-1]
-            volatility_pct = (atr / current_price) * 100
-            
-            # 自适应波动率调整
-            consolidation_threshold = self.config.get('consolidation_threshold', 0.008)
-            if self.config.get('volatility_adaptive', True):
-                if volatility_pct < 1.0:
-                    consolidation_threshold *= 0.8  # 低波动环境更敏感
-                elif volatility_pct > 3.0:
-                    consolidation_threshold *= 1.2  # 高波动环境更宽松
-            
-            meets_volatility = volatility_pct <= (consolidation_threshold * 100)
-            
-            if meets_volatility:
-                log_info(f"✅ 波动率检查通过: 当前波动率{volatility_pct:.2f}% ≤ 阈值{consolidation_threshold*100:.2f}%")
-            
-            return meets_volatility
-        
-        return False
+        except Exception as e:
+            log_warning(f"波动率分析异常: {e}")
+            return False
     
     def _recognize_time_series_pattern(self, price_history: Dict[str, list]) -> bool:
         """时间序列模式识别"""
-        prices = price_history.get('close', [])
-        if len(prices) < 6:
+        try:
+            if not price_history or not isinstance(price_history, dict):
+                return False
+                
+            prices = price_history.get('close', [])
+            if not isinstance(prices, list) or len(prices) < 6:
+                return False
+            
+            lookback_periods = self.config.get('lookback_periods', 6)
+            recent_prices = prices[-lookback_periods:]
+            
+            if not recent_prices:
+                return False
+                
+            # 价格通道计算
+            max_price = max(recent_prices)
+            min_price = min(recent_prices)
+            
+            if max_price <= 0:
+                return False
+                
+            channel_width = (max_price - min_price) / max_price
+            
+            consolidation_threshold = self.config.get('consolidation_threshold', 0.008)
+            meets_pattern = channel_width <= consolidation_threshold
+            
+            if meets_pattern:
+                log_info(f"✅ 时间序列模式检查通过: 通道宽度{channel_width:.2%} ≤ 阈值{consolidation_threshold:.2%}")
+            
+            return meets_pattern
+        except Exception as e:
+            log_warning(f"时间序列模式识别异常: {e}")
             return False
-        
-        lookback_periods = self.config.get('lookback_periods', 6)
-        recent_prices = prices[-lookback_periods:]
-        
-        # 价格通道计算
-        max_price = max(recent_prices)
-        min_price = min(recent_prices)
-        channel_width = (max_price - min_price) / max_price
-        
-        consolidation_threshold = self.config.get('consolidation_threshold', 0.008)
-        meets_pattern = channel_width <= consolidation_threshold
-        
-        if meets_pattern:
-            log_info(f"✅ 时间序列模式检查通过: 通道宽度{channel_width:.2%} ≤ 阈值{consolidation_threshold:.2%}")
-        
-        return meets_pattern
     
     def _analyze_patterns(self, price_history: Dict[str, list]) -> bool:
         """形态学分析 - 支撑阻力位识别"""
-        prices = price_history.get('close', [])
-        if len(prices) < 6:
+        try:
+            if not price_history or not isinstance(price_history, dict):
+                return False
+                
+            prices = price_history.get('close', [])
+            if not isinstance(prices, list) or len(prices) < 6:
+                return False
+            
+            lookback_periods = self.config.get('lookback_periods', 6)
+            recent_prices = prices[-lookback_periods:]
+            
+            if not recent_prices or len(recent_prices) < 3:
+                return False
+                
+            # 简化版支撑阻力位识别
+            supports = self._find_support_levels(recent_prices)
+            resistances = self._find_resistance_levels(recent_prices)
+            
+            # 计算支撑阻力密度
+            min_price = min(recent_prices)
+            max_price = max(recent_prices)
+            price_range = max_price - min_price
+            
+            if price_range <= 0:
+                return False
+            
+            support_density = len(supports) / len(recent_prices) if recent_prices else 0
+            resistance_density = len(resistances) / len(recent_prices) if recent_prices else 0
+            
+            # 支撑阻力比
+            density_ratio = (support_density + resistance_density) / 2
+            
+            meets_patterns = density_ratio >= 0.1  # 至少10%的点位是支撑/阻力
+            
+            if meets_patterns:
+                log_info(f"✅ 形态学分析通过: 支撑阻力密度{density_ratio:.2%}")
+            
+            return meets_patterns
+        except Exception as e:
+            log_warning(f"形态学分析异常: {e}")
             return False
-        
-        lookback_periods = self.config.get('lookback_periods', 6)
-        recent_prices = prices[-lookback_periods:]
-        
-        # 简化版支撑阻力位识别
-        supports = self._find_support_levels(recent_prices)
-        resistances = self._find_resistance_levels(recent_prices)
-        
-        # 需要至少2个支撑和2个阻力
-        meets_pattern = len(supports) >= 2 and len(resistances) >= 2
-        
-        if meets_pattern:
-            log_info(f"✅ 形态学分析通过: 识别到{len(supports)}个支撑位和{len(resistances)}个阻力位")
-        
-        return meets_pattern
     
     def _validate_volume(self, price_history: Dict[str, list]) -> bool:
         """成交量验证"""
-        volumes = price_history.get('volume', [])
-        if len(volumes) < 6:
+        try:
+            if not price_history or not isinstance(price_history, dict):
+                return False
+                
+            volumes = price_history.get('volume', [])
+            if not isinstance(volumes, list) or len(volumes) < 6:
+                return False
+            
+            lookback_periods = self.config.get('lookback_periods', 6)
+            recent_volumes = volumes[-lookback_periods:] if len(volumes) >= lookback_periods else volumes
+            
+            if not recent_volumes:
+                return False
+            
+            # 计算平均成交量
+            avg_volume = sum(recent_volumes) / len(recent_volumes)
+            current_volume = recent_volumes[-1]
+            
+            if avg_volume <= 0 or current_volume <= 0:
+                return False
+            
+            # 成交量异常检测
+            min_volume_threshold = self.config.get('min_volume_threshold', 1000000)
+            volume_ratio = current_volume / avg_volume
+            
+            meets_volume = current_volume >= min_volume_threshold and volume_ratio >= 0.5
+            
+            if meets_volume:
+                log_info(f"✅ 成交量验证通过: 当前成交量{current_volume:,.0f} ≥ 最小阈值{min_volume_threshold:,.0f}")
+            
+            return meets_volume
+        except Exception as e:
+            log_warning(f"成交量验证异常: {e}")
             return False
-        
-        lookback_periods = self.config.get('lookback_periods', 6)
-        recent_volumes = volumes[-lookback_periods:]
-        
-        # 计算平均成交量
-        avg_volume = sum(recent_volumes) / len(recent_volumes)
-        current_volume = recent_volumes[-1]
-        
-        # 成交量异常检测
-        min_volume_threshold = self.config.get('min_volume_threshold', 1000000)
-        volume_ratio = current_volume / avg_volume
-        
-        meets_volume = current_volume >= min_volume_threshold and volume_ratio >= 0.5
-        
-        if meets_volume:
-            log_info(f"✅ 成交量验证通过: 当前成交量{current_volume:,.0f} ≥ 最小阈值{min_volume_threshold:,.0f}")
-        
-        return meets_volume
     
     def _evaluate_trigger_conditions(self, price_history: Dict[str, list], market_data: Dict[str, Any]) -> bool:
         """触发条件综合判断"""
-        prices = price_history.get('close', [])
-        if len(prices) < 6:
+        try:
+            if not price_history or not isinstance(price_history, dict):
+                return False
+                
+            prices = price_history.get('close', [])
+            if not isinstance(prices, list) or len(prices) < 6:
+                return False
+            
+            # 确保所有价格都是有效的数字
+            valid_prices = [p for p in prices if isinstance(p, (int, float)) and p > 0]
+            if len(valid_prices) < 3:
+                return False
+            
+            # 横盘持续时间检查
+            consolidation_duration = self.config.get('consolidation_duration', 20)
+            max_consecutive = self.config.get('max_consecutive_periods', 8)
+            
+            # 突破阈值检查
+            breakout_threshold = self.config.get('breakout_threshold', 0.012)
+            
+            # 时间衰减因子
+            time_decay = self.config.get('time_decay_factor', 0.95)
+            
+            # 综合评分计算
+            recent_prices = valid_prices[-6:]  # 30分钟数据
+            if len(recent_prices) < 2:
+                return False
+                
+            mean_price = np.mean(recent_prices)
+            if mean_price <= 0:
+                return False
+                
+            price_stability = np.std(recent_prices) / mean_price
+            
+            meets_conditions = price_stability <= breakout_threshold
+            
+            if meets_conditions:
+                log_info(f"✅ 触发条件评估通过: 价格稳定性{price_stability:.4f} ≤ 突破阈值{breakout_threshold}")
+            
+            return meets_conditions
+        except Exception as e:
+            log_warning(f"触发条件评估异常: {e}")
             return False
-        
-        # 横盘持续时间检查
-        consolidation_duration = self.config.get('consolidation_duration', 20)
-        max_consecutive = self.config.get('max_consecutive_periods', 8)
-        
-        # 突破阈值检查
-        breakout_threshold = self.config.get('breakout_threshold', 0.012)
-        
-        # 时间衰减因子
-        time_decay = self.config.get('time_decay_factor', 0.95)
-        
-        # 综合评分计算
-        recent_prices = prices[-6:]  # 30分钟数据
-        price_stability = np.std(recent_prices) / np.mean(recent_prices)
-        
-        meets_conditions = price_stability <= breakout_threshold
-        
-        if meets_conditions:
-            log_info(f"✅ 触发条件评估通过: 价格稳定性{price_stability:.4f} ≤ 突破阈值{breakout_threshold}")
-        
-        return meets_conditions
     
     def _calculate_atr(self, highs: list, lows: list, closes: list) -> float:
         """计算ATR"""
@@ -728,14 +826,15 @@ class MarketMicrostructureAnalyzer:
         bid = market_state.get('bid', current_price * 0.999)
         ask = market_state.get('ask', current_price * 1.001)
         spread = abs(ask - bid)
-        spread_impact = (spread / current_price) * 100
+        spread_impact = (spread / current_price) * 100 if current_price > 0 else 0.0
         
         # 订单簿深度分析（简化版）
         depth_score = min(0.8 + (market_state.get('volume', 1000000) / 10000000), 1.0)
         
-        # 流动性指标
-        volatility = market_state.get('atr_pct', 2.0)
-        liquidity_ratio = market_state.get('volume', 1000000) / (volatility * current_price)
+        # 流动性指标 - 防止除零错误
+        volatility = max(market_state.get('atr_pct', 2.0), 0.01)  # 最小波动率0.01%
+        current_price_safe = max(current_price, 0.01)  # 最小价格0.01防止除零
+        liquidity_ratio = market_state.get('volume', 1000000) / (volatility * current_price_safe)
         
         return {
             'spread_impact': spread_impact,
@@ -1005,46 +1104,87 @@ class CrashProtectionSystem:
     
     def _detect_volume_anomaly(self, market_state: Dict[str, Any]) -> float:
         """检测成交量异常"""
-        current_volume = market_state.get('volume', 0)
-        avg_volume = np.mean([market_state.get('volume', 0)] * 20)  # 简化计算
-        
-        if avg_volume == 0:
+        try:
+            if not market_state or not isinstance(market_state, dict):
+                return 1.0
+                
+            current_volume = market_state.get('volume', 0)
+            if not isinstance(current_volume, (int, float)) or current_volume < 0:
+                return 1.0
+                
+            avg_volume = np.mean([market_state.get('volume', 0)] * 20)  # 简化计算
+            
+            if avg_volume <= 0:
+                return 1.0
+            
+            return current_volume / avg_volume
+        except Exception as e:
+            log_warning(f"成交量异常检测异常: {e}")
             return 1.0
-        
-        return current_volume / avg_volume
     
     def _detect_volatility_spike(self, market_state: Dict[str, Any]) -> float:
         """检测波动率突变"""
-        current_atr = market_state.get('atr_pct', 2.0)
-        avg_atr = 2.0  # 基准波动率
-        
-        return current_atr / avg_atr
+        try:
+            if not market_state or not isinstance(market_state, dict):
+                return 1.0
+                
+            current_atr = market_state.get('atr_pct', 2.0)
+            if not isinstance(current_atr, (int, float)) or current_atr <= 0:
+                return 1.0
+                
+            avg_atr = 2.0  # 基准波动率
+            
+            return current_atr / avg_atr
+        except Exception as e:
+            log_warning(f"波动率突变检测异常: {e}")
+            return 1.0
     
     def _detect_orderbook_imbalance(self, market_state: Dict[str, Any]) -> float:
         """检测订单簿失衡"""
-        # 简化版订单簿失衡检测
-        bid = market_state.get('bid', 0)
-        ask = market_state.get('ask', 0)
-        
-        if bid == 0 or ask == 0:
+        try:
+            if not market_state or not isinstance(market_state, dict):
+                return 0.0
+                
+            bid = market_state.get('bid', 0)
+            ask = market_state.get('ask', 0)
+            
+            if not isinstance(bid, (int, float)) or not isinstance(ask, (int, float)):
+                return 0.0
+                
+            if bid <= 0 or ask <= 0:
+                return 0.0
+            
+            mid_price = (bid + ask) / 2
+            if mid_price <= 0:
+                return 0.0
+                
+            imbalance = (ask - bid) / mid_price
+            
+            return imbalance
+        except Exception as e:
+            log_warning(f"订单簿失衡检测异常: {e}")
             return 0.0
-        
-        mid_price = (bid + ask) / 2
-        imbalance = (ask - bid) / mid_price
-        
-        return imbalance
     
     def _detect_cascade_risk(self, market_state: Dict[str, Any]) -> float:
         """检测连锁反应风险"""
-        # 基于多个指标的连锁反应风险评分
-        price_change = abs(market_state.get('price_change_pct', 0))
-        volatility = market_state.get('atr_pct', 2.0)
-        
-        # 风险评分算法
-        cascade_score = (price_change * 10) + (volatility / 2)
-        
-        # 归一化到0-1
-        return min(cascade_score / 10.0, 1.0)
+        try:
+            if not market_state or not isinstance(market_state, dict):
+                return 0.0
+                
+            price_change = abs(market_state.get('price_change_pct', 0))
+            volatility = market_state.get('atr_pct', 2.0)
+            
+            if not isinstance(price_change, (int, float)) or not isinstance(volatility, (int, float)):
+                return 0.0
+            
+            # 风险评分算法
+            cascade_score = (price_change * 10) + (volatility / 2)
+            
+            # 归一化到0-1
+            return min(cascade_score / 10.0, 1.0)
+        except Exception as e:
+            log_warning(f"连锁反应风险检测异常: {e}")
+            return 0.0
     
     def _execute_immediate_close(self, position: Dict[str, Any]):
         """立即平仓"""
