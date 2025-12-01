@@ -171,9 +171,9 @@ class AIClient:
             return None
     
     async def get_multi_ai_signals(self, market_data: Dict[str, Any], providers: List[str] = None) -> List[AISignal]:
-        """获取多AI信号"""
+        """获取多AI信号（增强版）"""
         if providers is None:
-            providers = ['deepseek', 'kimi']
+            providers = ['deepseek', 'kimi', 'openai']
             
         # 过滤掉未配置的提供商
         enabled_providers = [p for p in providers if self.providers.get(p, {}).get('api_key')]
@@ -182,22 +182,39 @@ class AIClient:
             log_warning("没有可用的AI提供商")
             return []
             
-        tasks = []
-        for provider in enabled_providers:
-            task = self.get_signal_from_provider(provider, market_data)
-            tasks.append(task)
-            
-        signals = []
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # 设置超时和重试机制
+        timeout = 25.0
+        max_retries = 2
         
-        for provider, result in zip(enabled_providers, results):
-            if isinstance(result, Exception):
-                log_error(f"{provider}调用异常: {result}")
-                continue
-            if result:
-                signals.append(result)
-                log_info(f"🤖 {provider.upper()}回复: {result.signal} (信心: {result.confidence:.1f})")
-                log_info(f"📋 {provider.upper()}理由: {result.reason[:100]}...")
+        signals = []
+        
+        for provider in enabled_providers:
+            for attempt in range(max_retries + 1):
+                try:
+                    signal = await asyncio.wait_for(
+                        self.get_signal_from_provider(provider, market_data),
+                        timeout=timeout
+                    )
+                    if signal:
+                        signals.append(signal)
+                        log_info(f"🤖 {provider.upper()}回复: {signal.signal} (信心: {signal.confidence:.1f})")
+                        log_info(f"📋 {provider.upper()}理由: {signal.reason[:100]}...")
+                        break
+                    else:
+                        if attempt < max_retries:
+                            log_warning(f"{provider}第{attempt + 1}次尝试失败，重试中...")
+                            await asyncio.sleep(1)
+                        else:
+                            log_error(f"{provider}最终失败")
+                            
+                except asyncio.TimeoutError:
+                    log_error(f"{provider}请求超时")
+                    if attempt < max_retries:
+                        await asyncio.sleep(1)
+                except Exception as e:
+                    log_error(f"{provider}异常: {e}")
+                    if attempt < max_retries:
+                        await asyncio.sleep(1)
         
         return signals
     

@@ -22,7 +22,7 @@ from utils import (
 )
 from logger_config import log_info, log_warning, log_error
 from trade_logger import trade_logger
-from data_manager import update_system_status, save_trade_record
+from data_manager import update_system_status, save_trade_record, data_management_system
 from ai_client import ai_client
 import asyncio
 
@@ -35,9 +35,13 @@ class AlphaArenaBot:
         self.last_signal = None
         self.price_history = []
         self.signal_cache = {}
+        self.data_manager = data_management_system
         
         log_info("🚀 Alpha Arena OKX 交易机器人初始化中...")
         self._display_startup_info()
+        
+        # 初始化数据管理
+        self._initialize_data_management()
     
     def _display_startup_info(self):
         """显示启动信息"""
@@ -50,6 +54,7 @@ class AlphaArenaBot:
         log_info("   • 智能风险管理")
         log_info("   • AI信号增强")
         log_info("   • 内存优化管理")
+        log_info("   • 数据管理系统")
         log_info("=" * 60)
         
         # 显示配置信息
@@ -59,14 +64,37 @@ class AlphaArenaBot:
         log_info(f"🔧 杠杆倍数: {config.get('trading', 'leverage')}x")
         log_info(f"🤖 AI模式: {'多模型' if config.get('ai', 'use_multi_ai') else '单模型'}")
         log_info("=" * 60)
+
+    def _initialize_data_management(self):
+        """初始化数据管理"""
+        try:
+            log_info("📊 初始化数据管理系统...")
+            
+            # 获取数据摘要
+            summary = self.data_manager.get_data_summary()
+            log_info(f"📊 数据管理摘要:")
+            for key, info in summary.items():
+                log_info(f"   • {key}: {info['total_records']} 条记录")
+            
+            # 清理旧数据（保留最近30天）
+            self.data_manager.cleanup_old_data(days_to_keep=30)
+            log_info("📊 数据清理完成")
+            
+        except Exception as e:
+            log_error(f"数据管理初始化失败: {e}")
     
     def get_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """获取AI交易信号"""
-        # 检查缓存
-        cache_key = f"signal_{market_data['price']:.2f}"
-        cached_signal = cache_manager.get(cache_key)
+        """获取AI交易信号（增强版）"""
+        return asyncio.run(self._get_ai_signal_async(market_data))
+    
+    async def _get_ai_signal_async(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """异步获取AI交易信号"""
+        # 增强的缓存键 - 包含更多市场特征
+        cache_key = self._generate_cache_key(market_data)
         
-        if cached_signal and not self._should_refresh_signal():
+        # 检查多层缓存
+        cached_signal = await self._get_cached_signal(cache_key)
+        if cached_signal:
             log_info("📊 使用缓存的AI信号")
             return cached_signal
         
@@ -74,29 +102,10 @@ class AlphaArenaBot:
         log_info("📊 获取新的AI信号...")
         
         try:
-            # 检查是否启用多AI模式
-            use_multi_ai = config.get('ai', 'use_multi_ai')
+            signal_data = await self._generate_enhanced_ai_signal(market_data)
             
-            if use_multi_ai:
-                # 多AI模式
-                providers = ['deepseek', 'kimi']
-                signals = asyncio.run(ai_client.get_multi_ai_signals(market_data, providers))
-                
-                if signals:
-                    signal_data = ai_client.fuse_signals(signals)
-                    log_info("📊 【多AI融合信号分析】")
-                    log_info(f"   📈 最终信号: {signal_data['signal']}")
-                    log_info(f"   💡 融合信心: {signal_data['confidence']:.1f}")
-                else:
-                    # 如果多AI失败，使用回退信号
-                    signal_data = self._create_fallback_signal(market_data)
-                    log_warning("多AI信号获取失败，使用回退信号")
-            else:
-                # 单AI模式 - 使用简化版
-                signal_data = self._generate_ai_signal(market_data)
-            
-            # 缓存信号
-            cache_manager.set(cache_key, signal_data, config.get('ai', 'cache_duration'))
+            # 增强缓存 - 多层缓存
+            await self._cache_signal(cache_key, signal_data)
             
             # 记录信号
             memory_manager.add_to_history('signals', signal_data)
@@ -106,7 +115,7 @@ class AlphaArenaBot:
             
         except Exception as e:
             log_error(f"AI信号生成失败: {e}")
-            return self._create_fallback_signal(market_data)
+            return await self._get_fallback_signal(market_data)
     
     def _generate_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """生成AI信号（简化版）"""
@@ -203,6 +212,159 @@ class AlphaArenaBot:
             'volatility': 2.0
         }
     
+    def _generate_cache_key(self, market_data: Dict[str, Any]) -> str:
+        """生成增强的缓存键"""
+        price = market_data.get('price', 0)
+        volume = market_data.get('volume', 0)
+        position = market_data.get('position', {})
+        
+        # 包含价格、成交量、持仓状态的特征组合
+        position_hash = f"{position.get('side', 'none')}_{position.get('size', 0):.4f}" if position else "none_0"
+        
+        # 价格区间化（每0.1%为一个区间）
+        price_bucket = int(price * 1000) / 1000
+        
+        # 成交量区间化
+        volume_bucket = int(volume / 1000) * 1000 if volume > 0 else 0
+        
+        return f"signal_{price_bucket}_{volume_bucket}_{position_hash}"
+    
+    async def _get_cached_signal(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """获取多层缓存的信号"""
+        # 第一层：内存缓存
+        cached = cache_manager.get(cache_key)
+        if cached and self._is_cache_valid(cached):
+            return cached
+        
+        # 第二层：历史信号缓存（基于相似市场状态）
+        similar_signal = await self._find_similar_market_state(cache_key)
+        if similar_signal:
+            return similar_signal
+        
+        return None
+    
+    def _is_cache_valid(self, cached_signal: Dict[str, Any]) -> bool:
+        """检查缓存是否有效"""
+        if not cached_signal:
+            return False
+        
+        # 检查时间有效性
+        signal_time = datetime.fromisoformat(cached_signal.get('timestamp', ''))
+        age_seconds = (datetime.now() - signal_time).total_seconds()
+        max_age = config.get('ai', 'cache_duration', 900)
+        
+        if age_seconds > max_age:
+            return False
+        
+        # 检查市场状态是否发生重大变化
+        recent_volatility = self._calculate_recent_volatility()
+        if recent_volatility > 5.0:  # 波动率超过5%时刷新信号
+            return False
+        
+        return True
+    
+    async def _find_similar_market_state(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """基于相似市场状态查找历史信号"""
+        # 获取历史信号
+        history = memory_manager.get_history('signals', limit=50)
+        
+        if not history:
+            return None
+        
+        # 查找最近的有效信号
+        for signal in reversed(history):
+            signal_time = datetime.fromisoformat(signal.get('timestamp', ''))
+            age_seconds = (datetime.now() - signal_time).total_seconds()
+            
+            # 只考虑2小时内的信号
+            if age_seconds < 7200:
+                # 检查信号质量
+                if signal.get('confidence', 0) > 0.7:
+                    return signal
+        
+        return None
+    
+    async def _cache_signal(self, cache_key: str, signal_data: Dict[str, Any]) -> None:
+        """增强缓存信号"""
+        # 主缓存
+        cache_manager.set(cache_key, signal_data, config.get('ai', 'cache_duration'))
+        
+        # 额外缓存：基于价格区间的信号
+        price_bucket_key = self._generate_price_bucket_key(signal_data)
+        cache_manager.set(price_bucket_key, signal_data, config.get('ai', 'cache_duration') * 2)
+    
+    def _generate_price_bucket_key(self, signal_data: Dict[str, Any]) -> str:
+        """基于价格区间的缓存键"""
+        # 从信号数据中提取价格信息
+        # 这里简化处理，实际应该存储价格信息
+        return f"price_bucket_{int(time.time() / 300)}"  # 5分钟一个区间
+    
+    async def _generate_enhanced_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """生成增强的AI信号"""
+        try:
+            # 检查是否启用多AI模式
+            use_multi_ai = config.get('ai', 'use_multi_ai')
+            
+            if use_multi_ai:
+                return await self._generate_multi_ai_signal(market_data)
+            else:
+                return await self._generate_single_ai_signal(market_data)
+                
+        except Exception as e:
+            log_error(f"增强AI信号生成失败: {e}")
+            return await self._get_fallback_signal(market_data)
+    
+    async def _generate_multi_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """生成多AI融合信号"""
+        providers = ['deepseek', 'kimi']
+        
+        # 获取信号，设置超时
+        try:
+            signals = await asyncio.wait_for(
+                ai_client.get_multi_ai_signals(market_data, providers),
+                timeout=30.0
+            )
+            
+            if signals:
+                signal_data = ai_client.fuse_signals(signals)
+                log_info("📊 【多AI融合信号分析】")
+                log_info(f"   📈 最终信号: {signal_data['signal']}")
+                log_info(f"   💡 融合信心: {signal_data['confidence']:.1f}")
+                
+                # 保存AI信号到数据管理系统
+                self.data_manager.save_ai_signal(signal_data)
+                
+                return signal_data
+            else:
+                log_warning("多AI信号获取失败，使用回退信号")
+                return await self._get_fallback_signal(market_data)
+                
+        except asyncio.TimeoutError:
+            log_warning("多AI信号获取超时，使用回退信号")
+            return await self._get_fallback_signal(market_data)
+    
+    async def _generate_single_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """生成单AI信号"""
+        # 使用现有的简化版信号生成
+        return self._generate_ai_signal(market_data)
+    
+    async def _get_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """获取回退信号（增强版）"""
+        # 检查是否有历史信号可用
+        history = memory_manager.get_history('signals', limit=10)
+        
+        if history:
+            # 使用最近的有效信号，降低信心
+            last_signal = history[-1]
+            fallback_signal = last_signal.copy()
+            fallback_signal['confidence'] = max(0.3, fallback_signal.get('confidence', 0.5) * 0.7)
+            fallback_signal['reason'] = f"回退信号: {fallback_signal.get('reason', '历史信号')}"
+            fallback_signal['timestamp'] = datetime.now().isoformat()
+            return fallback_signal
+        
+        # 最终回退：基于简单技术分析
+        return self._create_fallback_signal(market_data)
+    
     def _should_refresh_signal(self) -> bool:
         """判断是否需要刷新信号"""
         # 简化逻辑：每15分钟或信号变化时刷新
@@ -219,7 +381,13 @@ class AlphaArenaBot:
         self.price_history.append(market_data['price'])
         if len(self.price_history) > 100:
             self.price_history.pop(0)
-        
+
+        # 获取完整的价格历史数据用于分析
+        price_history = self._get_price_history_for_analysis()
+
+        # 更新暴跌保护系统的价格历史
+        crash_protection.price_history = self.price_history[-20:]  # 保留最近20个价格
+
         # 计算技术指标
         atr_pct = market_analyzer.calculate_atr(
             [market_data['price']] * 20,  # 简化版
@@ -227,9 +395,9 @@ class AlphaArenaBot:
             self.price_history,
             14
         )
-        
+
         trend_strength = market_analyzer.identify_trend(self.price_history)
-        
+
         # 波动率分类
         if atr_pct > 3.0:
             volatility = 'high'
@@ -237,14 +405,34 @@ class AlphaArenaBot:
             volatility = 'low'
         else:
             volatility = 'normal'
-        
+
+        # 计算价格变化率
+        price_change_pct = 0
+        if len(self.price_history) >= 2:
+            price_change_pct = (market_data['price'] - self.price_history[-2]) / self.price_history[-2]
+
+        # 检查横盘利润锁定
+        should_lock_profit = False
+        if market_data.get('position'):
+            should_lock_profit = consolidation_detector.should_lock_profit(
+                market_data['position'], market_data, price_history
+            )
+
+        # 检查暴跌保护
+        crash_protection_decision = crash_protection.should_trigger_crash_protection(
+            market_data['price'], market_data, market_data.get('position')
+        )
+
         return {
             'atr_pct': atr_pct,
             'trend_strength': trend_strength,
             'volatility': volatility,
             'price': market_data['price'],
             'bid': market_data['bid'],
-            'ask': market_data['ask']
+            'ask': market_data['ask'],
+            'price_change_pct': price_change_pct,
+            'should_lock_profit': should_lock_profit,
+            'crash_protection': crash_protection_decision
         }
     
     def execute_trading_cycle(self):
@@ -264,6 +452,17 @@ class AlphaArenaBot:
             
             # 2. 分析市场状态
             market_state = self.analyze_market_state(market_data)
+            
+            # 保存市场数据到数据管理系统
+            self.data_manager.save_market_data({
+                'price': market_data.get('price', 0),
+                'bid': market_data.get('bid', 0),
+                'ask': market_data.get('ask', 0),
+                'volume': market_data.get('volume', 0),
+                'high': market_data.get('high', 0),
+                'low': market_data.get('low', 0),
+                'market_state': market_state
+            })
             
             # 3. 获取AI信号
             signal_data = self.get_ai_signal({**market_data, **market_state})
@@ -291,11 +490,53 @@ class AlphaArenaBot:
         except Exception as e:
             log_error(f"交易周期异常: {e}")
             system_monitor.increment_counter('errors')
+            
+            # 保存错误日志到数据管理系统
+            try:
+                self.data_manager.save_system_log({
+                    'level': 'ERROR',
+                    'message': str(e),
+                    'context': 'trading_cycle',
+                    'cycle': self.current_cycle
+                })
+            except Exception as log_error:
+                log_error(f"保存错误日志失败: {log_error}")
     
     def _execute_trade_signal(self, signal: str, signal_data: Dict[str, Any], 
                             market_data: Dict[str, Any], market_state: Dict[str, Any]):
         """执行交易信号"""
         log_info(f"🎯 执行交易信号: {signal}")
+        
+        # 检查暴跌保护
+        crash_decision = market_state.get('crash_protection', {})
+        if crash_decision.get('should_protect', False):
+            log_info(f"🚨 暴跌保护触发 - 风险等级: {crash_decision.get('risk_level', 'unknown')}")
+            
+            # 根据风险等级调整交易行为
+            if crash_decision.get('action') in ['IMMEDIATE_CLOSE', 'EMERGENCY_STOP']:
+                signal = 'SELL'  # 强制平仓
+                signal_data['reason'] = f'暴跌保护: {crash_decision.get("reason", "")}'
+            elif crash_decision.get('action') == 'PROTECTIVE_STOP':
+                # 继续交易但增强保护
+                signal_data['reason'] = '暴跌保护模式'
+        
+        # 检查横盘利润锁定
+        if market_state.get('should_lock_profit', False) and market_data.get('position'):
+            log_info("🔒 检测到横盘利润锁定条件，执行平仓操作")
+            signal = 'SELL'  # 强制平仓
+            signal_data['reason'] = '横盘利润锁定'
+        
+        # 计算动态止盈止损
+        tp_sl_params = risk_manager.calculate_dynamic_tp_sl(
+            signal, market_data['price'], market_state, market_data.get('position')
+        )
+        
+        # 根据暴跌风险调整止盈止损
+        crash_decision = market_state.get('crash_protection', {})
+        if crash_decision.get('risk_level') == 'HIGH':
+            # 高风险时收紧止损
+            tp_sl_params['stop_loss'] = market_data['price'] * 0.99 if signal == 'BUY' else market_data['price'] * 1.01
+            tp_sl_params['take_profit'] = market_data['price'] * 1.01 if signal == 'BUY' else market_data['price'] * 0.99
         
         # 计算订单大小
         order_size = signal_processor.calculate_order_size(
@@ -306,8 +547,10 @@ class AlphaArenaBot:
             log_warning("订单大小为0，跳过交易")
             return
         
-        # 执行交易
-        success = trading_engine.execute_trade(signal, order_size)
+        # 执行带止盈止损的交易
+        success = trading_engine.execute_trade_with_tp_sl(
+            signal, order_size, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
+        )
         
         if success:
             system_monitor.increment_counter('trades')
@@ -315,7 +558,13 @@ class AlphaArenaBot:
                 'signal': signal,
                 'price': market_data['price'],
                 'size': order_size,
-                'confidence': signal_data['confidence']
+                'confidence': signal_data['confidence'],
+                'reason': signal_data.get('reason', 'AI signal'),
+                'stop_loss': tp_sl_params['stop_loss'],
+                'take_profit': tp_sl_params['take_profit'],
+                'risk_level': tp_sl_params['risk_level'],
+                'tp_sl_confidence': tp_sl_params['confidence'],
+                'crash_protection': crash_decision
             })
             
             # 保存交易记录
@@ -416,6 +665,16 @@ class AlphaArenaBot:
             
         except Exception as e:
             log_error(f"保存交易记录失败: {e}")
+
+    def _get_price_history_for_analysis(self) -> Dict[str, list]:
+        """获取用于分析的价格历史数据"""
+        # 这里简化处理，实际应用中应该从交易所获取完整的历史数据
+        return {
+            'close': self.price_history[-20:] if len(self.price_history) >= 20 else self.price_history,
+            'high': self.price_history[-20:] if len(self.price_history) >= 20 else self.price_history,
+            'low': self.price_history[-20:] if len(self.price_history) >= 20 else self.price_history,
+            'volume': [1000000] * len(self.price_history[-20:]) if len(self.price_history) >= 20 else [1000000] * len(self.price_history)
+        }
     
     def _perform_system_maintenance(self):
         """执行系统维护"""
@@ -433,6 +692,30 @@ class AlphaArenaBot:
         if self.current_cycle % 5 == 0:  # 每5轮更新一次
             system_stats = system_monitor.get_stats()
             log_info(f"📊 系统统计: {system_stats}")
+        
+        # 数据管理 - 保存性能指标
+        if self.current_cycle % 10 == 0:  # 每10轮保存一次
+            try:
+                performance_metrics = {
+                    'cycle': self.current_cycle,
+                    'uptime': system_stats.get('uptime_seconds', 0),
+                    'trades': system_stats.get('trades', 0),
+                    'errors': system_stats.get('errors', 0),
+                    'api_calls': system_stats.get('api_calls', 0),
+                    'warnings': system_stats.get('warnings', 0)
+                }
+                self.data_manager.save_performance_metrics(performance_metrics)
+                log_info("📊 性能指标已保存")
+            except Exception as e:
+                log_error(f"保存性能指标失败: {e}")
+        
+        # 定期清理旧数据
+        if self.current_cycle % 100 == 0:  # 每100轮清理一次
+            try:
+                self.data_manager.cleanup_old_data(days_to_keep=30)
+                log_info("📊 旧数据清理完成")
+            except Exception as e:
+                log_error(f"清理旧数据失败: {e}")
     
     def run(self):
         """运行交易机器人"""

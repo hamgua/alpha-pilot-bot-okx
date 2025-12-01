@@ -61,7 +61,12 @@ class ConfigManager:
                 'lookback_periods': 6,
                 'consolidation_duration': 20,
                 'only_long_positions': True,
-                'volatility_adaptive': True
+                'volatility_adaptive': True,
+                'min_volume_threshold': 1000000,
+                'max_consecutive_periods': 8,
+                'breakout_threshold': 0.012,
+                'time_decay_factor': 0.95,
+                'volume_weight': 0.3
             },
             'smart_tp_sl': {
                 'enabled': True,
@@ -69,7 +74,15 @@ class ConfigManager:
                 'base_tp_pct': 0.06,
                 'adaptive_mode': True,
                 'high_vol_multiplier': 1.5,
-                'low_vol_multiplier': 0.8
+                'low_vol_multiplier': 0.8,
+                'trend_strength_weight': 0.4,
+                'volume_weight': 0.3,
+                'time_weight': 0.2,
+                'confidence_weight': 0.1,
+                'max_sl_pct': 0.05,
+                'max_tp_pct': 0.15,
+                'min_sl_pct': 0.01,
+                'min_tp_pct': 0.03
             },
             'limit_order': {
                 'enabled': os.getenv('LIMIT_ORDER_ENABLED', 'true').lower() == 'true',
@@ -81,7 +94,19 @@ class ConfigManager:
             },
             'price_crash_protection': {
                 'enabled': True,
-                'crash_threshold': 0.03,  # 3%跌幅认为是暴跌
+                'crash_threshold_critical': 0.05,
+                'crash_threshold_high': 0.03,
+                'crash_threshold_medium': 0.02,
+                'crash_threshold_low': 0.01,
+                'volume_spike_threshold': 3.0,
+                'volatility_spike_threshold': 2.5,
+                'orderbook_imbalance_threshold': 0.7,
+                'cascade_risk_threshold': 0.8,
+                'action_delay': 5,
+                'cooldown_period': 300,
+                'immediate_close_threshold': 0.08,
+                'tighten_stop_threshold': 0.04,
+                'enhanced_monitor_threshold': 0.02,
                 'stop_sl_update_on_crash': True
             }
         }
@@ -105,13 +130,22 @@ class ConfigManager:
         """AI配置"""
         return {
             'use_multi_ai': os.getenv('USE_MULTI_AI', 'false').lower() == 'true',
-            'cache_duration': 900,
+            'cache_duration': int(os.getenv('AI_CACHE_DURATION', '900')),
+            'timeout': int(os.getenv('AI_TIMEOUT', '30')),
+            'max_retries': int(os.getenv('AI_MAX_RETRIES', '2')),
+            'min_confidence_threshold': float(os.getenv('AI_MIN_CONFIDENCE', '0.5')),
             'models': {
                 'kimi': os.getenv('KIMI_API_KEY'),
                 'deepseek': os.getenv('DEEPSEEK_API_KEY'),
                 'openai': os.getenv('OPENAI_API_KEY')
             },
-            'fallback_enabled': True
+            'fallback_enabled': os.getenv('AI_FALLBACK_ENABLED', 'true').lower() == 'true',
+            'similarity_threshold': float(os.getenv('AI_SIMILARITY_THRESHOLD', '0.8')),
+            'cache_levels': {
+                'memory': True,
+                'price_bucket': True,
+                'pattern': True
+            }
         }
     
     def _load_system_config(self) -> Dict[str, Any]:

@@ -3,8 +3,8 @@
 """
 import json
 import os
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
 
 import os
 
@@ -251,4 +251,290 @@ def update_system_status(
     # 🆕 保存权益快照（如果有账户信息）
     if account_info and 'equity' in account_info:
         save_equity_snapshot(account_info['equity'], current_data['last_update'])
+
+class DataManagementSystem:
+    """数据管理系统"""
+    
+    def __init__(self):
+        self.data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_json")
+        os.makedirs(self.data_dir, exist_ok=True)
+        
+        # 数据文件路径
+        self.files = {
+            'trading_data': os.path.join(self.data_dir, "trading_data.json"),
+            'trades_history': os.path.join(self.data_dir, "trades_history.json"),
+            'equity_history': os.path.join(self.data_dir, "equity_history.json"),
+            'market_data': os.path.join(self.data_dir, "market_data.json"),
+            'ai_signals': os.path.join(self.data_dir, "ai_signals.json"),
+            'system_logs': os.path.join(self.data_dir, "system_logs.json"),
+            'performance_metrics': os.path.join(self.data_dir, "performance_metrics.json")
+        }
+        
+        # 确保所有数据文件存在
+        self._initialize_data_files()
+    
+    def _initialize_data_files(self):
+        """初始化数据文件"""
+        for file_path in self.files.values():
+            if not os.path.exists(file_path):
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump([], f, ensure_ascii=False, indent=2)
+    
+    def save_market_data(self, market_data: Dict[str, Any]) -> bool:
+        """保存市场数据"""
+        try:
+            # 添加时间戳
+            market_data['timestamp'] = datetime.now().isoformat()
+            
+            # 加载现有数据
+            existing_data = self._load_json_file(self.files['market_data'])
+            existing_data.append(market_data)
+            
+            # 保留最近1000条记录
+            if len(existing_data) > 1000:
+                existing_data = existing_data[-1000:]
+            
+            # 保存
+            self._save_json_file(self.files['market_data'], existing_data)
+            return True
+            
+        except Exception as e:
+            print(f"保存市场数据失败: {e}")
+            return False
+    
+    def save_ai_signal(self, ai_signal: Dict[str, Any]) -> bool:
+        """保存AI信号"""
+        try:
+            # 添加时间戳
+            ai_signal['timestamp'] = datetime.now().isoformat()
+            
+            # 加载现有数据
+            existing_signals = self._load_json_file(self.files['ai_signals'])
+            existing_signals.append(ai_signal)
+            
+            # 保留最近500条记录
+            if len(existing_signals) > 500:
+                existing_signals = existing_signals[-500:]
+            
+            # 保存
+            self._save_json_file(self.files['ai_signals'], existing_signals)
+            return True
+            
+        except Exception as e:
+            print(f"保存AI信号失败: {e}")
+            return False
+    
+    def save_system_log(self, log_entry: Dict[str, Any]) -> bool:
+        """保存系统日志"""
+        try:
+            # 添加时间戳
+            log_entry['timestamp'] = datetime.now().isoformat()
+            
+            # 加载现有日志
+            existing_logs = self._load_json_file(self.files['system_logs'])
+            existing_logs.append(log_entry)
+            
+            # 保留最近10000条记录
+            if len(existing_logs) > 10000:
+                existing_logs = existing_logs[-10000:]
+            
+            # 保存
+            self._save_json_file(self.files['system_logs'], existing_logs)
+            return True
+            
+        except Exception as e:
+            print(f"保存系统日志失败: {e}")
+            return False
+    
+    def save_performance_metrics(self, metrics: Dict[str, Any]) -> bool:
+        """保存性能指标"""
+        try:
+            # 添加时间戳
+            metrics['timestamp'] = datetime.now().isoformat()
+            
+            # 加载现有数据
+            existing_metrics = self._load_json_file(self.files['performance_metrics'])
+            existing_metrics.append(metrics)
+            
+            # 保留最近1000条记录
+            if len(existing_metrics) > 1000:
+                existing_metrics = existing_metrics[-1000:]
+            
+            # 保存
+            self._save_json_file(self.files['performance_metrics'], existing_metrics)
+            return True
+            
+        except Exception as e:
+            print(f"保存性能指标失败: {e}")
+            return False
+    
+    def get_market_data_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """获取市场数据历史"""
+        try:
+            data = self._load_json_file(self.files['market_data'])
+            return data[-limit:] if limit else data
+        except Exception as e:
+            print(f"获取市场数据历史失败: {e}")
+            return []
+    
+    def get_ai_signal_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """获取AI信号历史"""
+        try:
+            signals = self._load_json_file(self.files['ai_signals'])
+            return signals[-limit:] if limit else signals
+        except Exception as e:
+            print(f"获取AI信号历史失败: {e}")
+            return []
+    
+    def get_system_logs(self, level: str = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """获取系统日志"""
+        try:
+            logs = self._load_json_file(self.files['system_logs'])
+            
+            if level:
+                logs = [log for log in logs if log.get('level') == level]
+            
+            return logs[-limit:] if limit else logs
+        except Exception as e:
+            print(f"获取系统日志失败: {e}")
+            return []
+    
+    def get_performance_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """获取性能历史"""
+        try:
+            performance = self._load_json_file(self.files['performance_metrics'])
+            return performance[-limit:] if limit else performance
+        except Exception as e:
+            print(f"获取性能历史失败: {e}")
+            return []
+    
+    def backup_data(self, backup_name: str = None) -> bool:
+        """备份数据"""
+        try:
+            if backup_name is None:
+                backup_name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            backup_dir = os.path.join(self.data_dir, "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            backup_path = os.path.join(backup_dir, f"{backup_name}.json")
+            
+            # 收集所有数据
+            backup_data = {
+                'timestamp': datetime.now().isoformat(),
+                'trading_data': self._load_json_file(self.files['trading_data']),
+                'trades_history': self._load_json_file(self.files['trades_history']),
+                'equity_history': self._load_json_file(self.files['equity_history']),
+                'market_data': self._load_json_file(self.files['market_data']),
+                'ai_signals': self._load_json_file(self.files['ai_signals']),
+                'system_logs': self._load_json_file(self.files['system_logs']),
+                'performance_metrics': self._load_json_file(self.files['performance_metrics'])
+            }
+            
+            # 保存备份
+            self._save_json_file(backup_path, backup_data)
+            return True
+            
+        except Exception as e:
+            print(f"备份数据失败: {e}")
+            return False
+    
+    def restore_data(self, backup_name: str) -> bool:
+        """恢复数据"""
+        try:
+            backup_path = os.path.join(self.data_dir, "backups", f"{backup_name}.json")
+            
+            if not os.path.exists(backup_path):
+                print(f"备份文件不存在: {backup_path}")
+                return False
+            
+            # 加载备份数据
+            backup_data = self._load_json_file(backup_path)
+            
+            # 恢复各个数据文件
+            for file_key, data in backup_data.items():
+                if file_key in self.files and isinstance(data, list):
+                    self._save_json_file(self.files[file_key], data)
+            
+            return True
+            
+        except Exception as e:
+            print(f"恢复数据失败: {e}")
+            return False
+    
+    def cleanup_old_data(self, days_to_keep: int = 30) -> bool:
+        """清理旧数据"""
+        try:
+            cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+            
+            for file_path in self.files.values():
+                if os.path.exists(file_path):
+                    data = self._load_json_file(file_path)
+                    
+                    if isinstance(data, list) and len(data) > 0:
+                        # 过滤掉旧数据
+                        filtered_data = []
+                        for item in data:
+                            if 'timestamp' in item:
+                                try:
+                                    item_date = datetime.fromisoformat(item['timestamp'])
+                                    if item_date >= cutoff_date:
+                                        filtered_data.append(item)
+                                except:
+                                    filtered_data.append(item)  # 保留无法解析时间戳的数据
+                        
+                        self._save_json_file(file_path, filtered_data)
+            
+            return True
+            
+        except Exception as e:
+            print(f"清理旧数据失败: {e}")
+            return False
+    
+    def get_data_summary(self) -> Dict[str, Any]:
+        """获取数据摘要"""
+        summary = {}
+        
+        for file_key, file_path in self.files.items():
+            try:
+                data = self._load_json_file(file_path)
+                summary[file_key] = {
+                    'total_records': len(data),
+                    'file_size': os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                    'last_modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat() if os.path.exists(file_path) else None
+                }
+            except Exception as e:
+                summary[file_key] = {
+                    'total_records': 0,
+                    'file_size': 0,
+                    'last_modified': None,
+                    'error': str(e)
+                }
+        
+        return summary
+    
+    def _load_json_file(self, file_path: str) -> List[Dict[str, Any]]:
+        """加载JSON文件"""
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if content:
+                        return json.loads(content)
+            return []
+        except (json.JSONDecodeError, Exception):
+            return []
+    
+    def _save_json_file(self, file_path: str, data: Any) -> bool:
+        """保存JSON文件"""
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            print(f"保存文件失败 {file_path}: {e}")
+            return False
+
+# 全局数据管理实例
+data_management_system = DataManagementSystem()
 

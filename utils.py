@@ -248,11 +248,840 @@ class LoggerHelper:
         log_error(f"❌ 错误事件: {error_type} - {error_data}")
         trade_logger.log_error(error_info)
 
+class ErrorClassifier:
+    """错误分类器"""
+    
+    def __init__(self):
+        self.classification_rules = {
+            'network': [
+                'ConnectionError', 'TimeoutError', 'NetworkError',
+                'SSLError', 'ProxyError', 'DNSLookupError', 'ConnectionResetError'
+            ],
+            'api': [
+                'APIError', 'RateLimitError', 'AuthenticationError',
+                'PermissionError', 'InvalidRequestError', 'ExchangeError',
+                'InsufficientFunds', 'InvalidOrder', 'OrderNotFound'
+            ],
+            'data': [
+                'DataError', 'ValidationError', 'MissingDataError',
+                'PriceError', 'TimestampError', 'FormatError', 'JSONDecodeError'
+            ],
+            'system': [
+                'MemoryError', 'SystemError', 'ProcessError',
+                'ResourceError', 'ThreadError', 'QueueError', 'OSError'
+            ],
+            'strategy': [
+                'StrategyError', 'CalculationError', 'LogicError',
+                'ConfigurationError', 'ParameterError'
+            ]
+        }
+    
+    def classify_error(self, error: Exception) -> str:
+        """对错误进行分类"""
+        error_name = type(error).__name__
+        error_message = str(error).lower()
+        
+        for category, patterns in self.classification_rules.items():
+            if any(pattern.lower() in error_name.lower() or 
+                   pattern.lower() in error_message 
+                   for pattern in patterns):
+                return category
+        
+        return 'unknown'
+
+class ErrorRecoveryManager:
+    """异常恢复管理器"""
+    
+    def __init__(self):
+        self.config = config.get('system', 'error_recovery')
+        self.error_classifier = ErrorClassifier()
+        self.recovery_strategies = {
+            'network': self._handle_network_error,
+            'api': self._handle_api_error,
+            'data': self._handle_data_error,
+            'system': self._handle_system_error,
+            'strategy': self._handle_strategy_error,
+            'unknown': self._handle_unknown_error
+        }
+        self.error_history = []
+        self.recovery_stats = {'total_errors': 0, 'successful_recoveries': 0}
+    
+    def handle_error(self, error: Exception, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """统一的错误处理入口"""
+        
+        self.recovery_stats['total_errors'] += 1
+        
+        # 1. 错误分类
+        error_category = self.error_classifier.classify_error(error)
+        
+        # 2. 记录错误
+        error_record = self._record_error(error, error_category, context)
+        
+        # 3. 执行恢复策略
+        recovery_result = self._execute_recovery(error_category, error, context)
+        
+        # 4. 更新统计
+        if recovery_result['success']:
+            self.recovery_stats['successful_recoveries'] += 1
+        
+        # 5. 发送警报
+        if recovery_result['severity'] in ['HIGH', 'CRITICAL']:
+            self._send_alert(error_record, recovery_result)
+        
+        return recovery_result
+    
+    def _record_error(self, error: Exception, category: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """记录错误信息"""
+        error_record = {
+            'timestamp': datetime.now().isoformat(),
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'category': category,
+            'context': context or {},
+            'stack_trace': self._get_stack_trace(),
+            'recovery_attempt': 0
+        }
+        
+        self.error_history.append(error_record)
+        
+        # 保留最近100条错误记录
+        if len(self.error_history) > 100:
+            self.error_history.pop(0)
+        
+        return error_record
+    
+    def _execute_recovery(self, category: str, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """执行恢复策略"""
+        
+        recovery_handler = self.recovery_strategies.get(category, self._handle_unknown_error)
+        
+        try:
+            return recovery_handler(error, context)
+        except Exception as recovery_error:
+            log_error(f"恢复策略执行失败: {recovery_error}")
+            return {
+                'success': False,
+                'action': 'FALLBACK_SHUTDOWN',
+                'severity': 'CRITICAL',
+                'message': f'恢复策略失败: {recovery_error}',
+                'next_action': 'SAFE_SHUTDOWN'
+            }
+    
+    def _handle_network_error(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理网络错误"""
+        
+        retry_config = self.config.get('network', {})
+        max_retries = retry_config.get('max_retries', 3)
+        retry_delay = retry_config.get('retry_delay', 5)
+        
+        retry_count = context.get('retry_count', 0)
+        
+        if retry_count < max_retries:
+            log_info(f"🔄 网络错误恢复 - 重试 {retry_count + 1}/{max_retries}")
+            time.sleep(retry_delay)
+            return {
+                'success': True,
+                'action': 'RETRY',
+                'severity': 'LOW',
+                'message': f'网络错误，{retry_delay}秒后重试',
+                'next_action': 'CONTINUE',
+                'retry_count': retry_count + 1
+            }
+        else:
+            return {
+                'success': False,
+                'action': 'NETWORK_BACKOFF',
+                'severity': 'HIGH',
+                'message': '网络错误重试次数用尽，进入冷却模式',
+                'next_action': 'COOLDOWN',
+                'cooldown_duration': retry_config.get('cooldown_duration', 60)
+            }
+    
+    def _handle_api_error(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理API错误"""
+        
+        error_message = str(error).lower()
+        
+        if 'rate limit' in error_message or '429' in error_message:
+            return self._handle_rate_limit_error(context)
+        elif 'authentication' in error_message or '401' in error_message:
+            return self._handle_authentication_error(context)
+        elif 'insufficient funds' in error_message:
+            return self._handle_insufficient_funds_error(context)
+        else:
+            return self._handle_generic_api_error(error, context)
+    
+    def _handle_rate_limit_error(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理限频错误"""
+        
+        rate_limit_config = self.config.get('rate_limit', {})
+        backoff_multiplier = rate_limit_config.get('backoff_multiplier', 2)
+        base_delay = rate_limit_config.get('base_delay', 10)
+        
+        retry_count = context.get('retry_count', 0)
+        delay = base_delay * (backoff_multiplier ** retry_count)
+        
+        log_info(f"⏱️ 限频保护 - 等待 {delay} 秒")
+        time.sleep(min(delay, 60))  # 最大等待60秒
+        
+        return {
+            'success': True,
+            'action': 'RATE_LIMIT_BACKOFF',
+            'severity': 'MEDIUM',
+            'message': f'限频保护，等待{delay}秒',
+            'next_action': 'RETRY',
+            'retry_count': retry_count + 1
+        }
+    
+    def _handle_authentication_error(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理认证错误"""
+        
+        log_error("🔐 API认证失败 - 需要检查API密钥配置")
+        return {
+            'success': False,
+            'action': 'AUTH_FAILURE',
+            'severity': 'CRITICAL',
+            'message': 'API认证失败，请检查API密钥配置',
+            'next_action': 'STOP_TRADING'
+        }
+    
+    def _handle_insufficient_funds_error(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理资金不足错误"""
+        
+        log_warning("💰 资金不足 - 调整交易规模")
+        return {
+            'success': True,
+            'action': 'ADJUST_POSITION_SIZE',
+            'severity': 'MEDIUM',
+            'message': '资金不足，调整交易规模',
+            'next_action': 'CONTINUE_WITH_REDUCED_SIZE',
+            'reduction_factor': 0.5
+        }
+    
+    def _handle_generic_api_error(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理通用API错误"""
+        
+        retry_config = self.config.get('api', {})
+        max_retries = retry_config.get('max_retries', 2)
+        retry_delay = retry_config.get('retry_delay', 3)
+        
+        retry_count = context.get('retry_count', 0)
+        
+        if retry_count < max_retries:
+            log_info(f"🔄 API错误恢复 - 重试 {retry_count + 1}/{max_retries}")
+            time.sleep(retry_delay)
+            return {
+                'success': True,
+                'action': 'API_RETRY',
+                'severity': 'LOW',
+                'message': f'API错误，{retry_delay}秒后重试',
+                'next_action': 'RETRY',
+                'retry_count': retry_count + 1
+            }
+        else:
+            return {
+                'success': False,
+                'action': 'API_FAILURE',
+                'severity': 'HIGH',
+                'message': 'API错误重试次数用尽',
+                'next_action': 'SWITCH_TO_BACKUP'
+            }
+    
+    def _handle_data_error(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理数据错误"""
+        
+        log_info("📊 数据错误 - 使用缓存或默认值")
+        return {
+            'success': True,
+            'action': 'USE_FALLBACK_DATA',
+            'severity': 'LOW',
+            'message': '数据错误，使用缓存或默认值',
+            'next_action': 'CONTINUE_WITH_FALLBACK'
+        }
+    
+    def _handle_system_error(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理系统错误"""
+        
+        system_config = self.config.get('system', {})
+        memory_threshold = system_config.get('memory_threshold', 0.8)
+        
+        # 检查内存使用情况
+        import psutil
+        memory_usage = psutil.virtual_memory().percent / 100
+        
+        if memory_usage > memory_threshold:
+            log_warning(f"🧠 内存使用率过高: {memory_usage:.2%}")
+            # 清理缓存
+            cache_manager.clear_cache()
+            memory_manager.force_cleanup()
+            
+            return {
+                'success': True,
+                'action': 'MEMORY_CLEANUP',
+                'severity': 'MEDIUM',
+                'message': '内存清理完成',
+                'next_action': 'CONTINUE'
+            }
+        
+        return {
+            'success': False,
+            'action': 'SYSTEM_FAILURE',
+            'severity': 'CRITICAL',
+            'message': '系统错误，无法自动恢复',
+            'next_action': 'SAFE_SHUTDOWN'
+        }
+    
+    def _handle_strategy_error(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理策略错误"""
+        
+        log_info("🎯 策略错误 - 使用保守策略")
+        return {
+            'success': True,
+            'action': 'USE_CONSERVATIVE_STRATEGY',
+            'severity': 'LOW',
+            'message': '策略错误，使用保守策略',
+            'next_action': 'CONTINUE_WITH_CONSERVATIVE_MODE'
+        }
+    
+    def _handle_unknown_error(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """处理未知错误"""
+        
+        log_error(f"❓ 未知错误: {error}")
+        return {
+            'success': False,
+            'action': 'UNKNOWN_ERROR',
+            'severity': 'HIGH',
+            'message': f'未知错误: {error}',
+            'next_action': 'SAFE_SHUTDOWN'
+        }
+    
+    def _get_stack_trace(self) -> str:
+        """获取堆栈跟踪"""
+        import traceback
+        return traceback.format_exc()
+    
+    def _send_alert(self, error_record: Dict[str, Any], recovery_result: Dict[str, Any]):
+        """发送错误警报"""
+        alert_message = f"""
+        🚨 交易系统错误警报
+        
+        时间: {error_record['timestamp']}
+        错误类型: {error_record['error_type']}
+        错误分类: {error_record['category']}
+        严重程度: {recovery_result['severity']}
+        恢复动作: {recovery_result['action']}
+        下一步行动: {recovery_result['next_action']}
+        
+        错误详情: {error_record['error_message']}
+        上下文: {json.dumps(error_record['context'], indent=2)}
+        """
+        
+        log_error(alert_message)
+        # 实际应用中这里会发送邮件、短信等通知
+    
+    def get_recovery_stats(self) -> Dict[str, Any]:
+        """获取恢复统计"""
+        return {
+            'total_errors': self.recovery_stats['total_errors'],
+            'successful_recoveries': self.recovery_stats['successful_recoveries'],
+            'recovery_rate': (
+                self.recovery_stats['successful_recoveries'] / 
+                max(self.recovery_stats['total_errors'], 1)
+            ),
+            'recent_errors': self.error_history[-10:],  # 最近10条错误
+            'error_distribution': self._get_error_distribution()
+        }
+    
+    def _get_error_distribution(self) -> Dict[str, int]:
+        """获取错误分布统计"""
+        distribution = {}
+        for error in self.error_history:
+            category = error['category']
+            distribution[category] = distribution.get(category, 0) + 1
+        return distribution
+
+class StatePersistence:
+    """状态持久化管理器"""
+    
+    def __init__(self):
+        self.config = config.get('system', 'state_persistence')
+        self.state_dir = self.config.get('state_dir', '/app/data/state')
+        self.checkpoint_interval = self.config.get('checkpoint_interval', 300)  # 5分钟
+        self.max_checkpoints = self.config.get('max_checkpoints', 10)
+        
+        # 确保状态目录存在
+        os.makedirs(self.state_dir, exist_ok=True)
+    
+    def save_state(self, state_type: str, data: Dict[str, Any]) -> bool:
+        """保存状态"""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{state_type}_{timestamp}.json"
+            filepath = os.path.join(self.state_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            # 清理旧的状态文件
+            self._cleanup_old_states(state_type)
+            
+            return True
+            
+        except Exception as e:
+            log_error(f"保存状态失败: {e}")
+            return False
+    
+    def load_latest_state(self, state_type: str) -> Optional[Dict[str, Any]]:
+        """加载最新状态"""
+        try:
+            pattern = f"{state_type}_*.json"
+            files = glob.glob(os.path.join(self.state_dir, pattern))
+            
+            if not files:
+                return None
+            
+            latest_file = max(files, key=os.path.getctime)
+            
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+                
+        except Exception as e:
+            log_error(f"加载状态失败: {e}")
+            return None
+    
+    def _cleanup_old_states(self, state_type: str):
+        """清理旧的状态文件"""
+        try:
+            pattern = f"{state_type}_*.json"
+            files = glob.glob(os.path.join(self.state_dir, pattern))
+            
+            # 按创建时间排序，保留最新的max_checkpoints个
+            files.sort(key=os.path.getctime, reverse=True)
+            
+            for old_file in files[self.max_checkpoints:]:
+                try:
+                    os.remove(old_file)
+                except Exception as e:
+                    log_warning(f"删除旧状态文件失败: {e}")
+                    
+        except Exception as e:
+            log_error(f"清理状态文件失败: {e}")
+
+class RecoveryEngine:
+    """恢复引擎"""
+    
+    def __init__(self):
+        self.state_persistence = StatePersistence()
+        self.error_recovery = ErrorRecoveryManager()
+        self.checkpoint_manager = CheckpointManager()
+    
+    def create_checkpoint(self, system_state: Dict[str, Any]) -> bool:
+        """创建系统检查点"""
+        return self.checkpoint_manager.create_checkpoint(system_state)
+    
+    def restore_from_checkpoint(self, checkpoint_id: str = None) -> Dict[str, Any]:
+        """从检查点恢复"""
+        return self.checkpoint_manager.restore_checkpoint(checkpoint_id)
+    
+    def get_system_health(self) -> Dict[str, Any]:
+        """获取系统健康状态"""
+        return {
+            'error_recovery_stats': self.error_recovery.get_recovery_stats(),
+            'last_checkpoint': self.checkpoint_manager.get_last_checkpoint(),
+            'system_uptime': self._calculate_uptime(),
+            'recovery_status': 'healthy'
+        }
+    
+    def _calculate_uptime(self) -> str:
+        """计算系统运行时间"""
+        # 简化版运行时间计算
+        return "系统运行正常"
+
+class CheckpointManager:
+    """检查点管理器"""
+    
+    def __init__(self):
+        self.config = config.get('system', 'checkpoint_manager')
+        self.checkpoint_dir = self.config.get('checkpoint_dir', '/app/data/checkpoints')
+        self.max_checkpoints = self.config.get('max_checkpoints', 5)
+        
+        # 确保检查点目录存在
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+    
+    def create_checkpoint(self, system_state: Dict[str, Any]) -> bool:
+        """创建系统检查点"""
+        try:
+            checkpoint = {
+                'timestamp': datetime.now().isoformat(),
+                'system_state': system_state,
+                'version': '1.0.0',
+                'checksum': self._calculate_checksum(system_state)
+            }
+            
+            filename = f"checkpoint_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filepath = os.path.join(self.checkpoint_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(checkpoint, f, indent=2, ensure_ascii=False)
+            
+            # 清理旧的检查点
+            self._cleanup_old_checkpoints()
+            
+            log_info(f"✅ 检查点创建成功: {filename}")
+            return True
+            
+        except Exception as e:
+            log_error(f"创建检查点失败: {e}")
+            return False
+    
+    def restore_checkpoint(self, checkpoint_id: str = None) -> Dict[str, Any]:
+        """从检查点恢复"""
+        try:
+            checkpoints = self._list_checkpoints()
+            
+            if not checkpoints:
+                return {'success': False, 'message': '无可用检查点'}
+            
+            if checkpoint_id:
+                target_checkpoint = next((cp for cp in checkpoints if cp['id'] == checkpoint_id), None)
+            else:
+                target_checkpoint = checkpoints[0]  # 最新的检查点
+            
+            if not target_checkpoint:
+                return {'success': False, 'message': '指定的检查点不存在'}
+            
+            # 验证检查点完整性
+            if not self._validate_checkpoint(target_checkpoint):
+                return {'success': False, 'message': '检查点验证失败'}
+            
+            return {
+                'success': True,
+                'checkpoint': target_checkpoint,
+                'message': '检查点恢复成功'
+            }
+            
+        except Exception as e:
+            log_error(f"恢复检查点失败: {e}")
+            return {'success': False, 'message': str(e)}
+    
+    def _list_checkpoints(self) -> List[Dict[str, Any]]:
+        """列出所有检查点"""
+        try:
+            files = glob.glob(os.path.join(self.checkpoint_dir, "checkpoint_*.json"))
+            checkpoints = []
+            
+            for file in sorted(files, key=os.path.getctime, reverse=True):
+                try:
+                    with open(file, 'r', encoding='utf-8') as f:
+                        checkpoint = json.load(f)
+                        checkpoint['id'] = os.path.basename(file)
+                        checkpoint['filepath'] = file
+                        checkpoints.append(checkpoint)
+                except Exception as e:
+                    log_warning(f"加载检查点失败: {e}")
+            
+            return checkpoints
+            
+        except Exception as e:
+            log_error(f"列出检查点失败: {e}")
+            return []
+    
+    def _validate_checkpoint(self, checkpoint: Dict[str, Any]) -> bool:
+        """验证检查点完整性"""
+        try:
+            expected_checksum = checkpoint.get('checksum')
+            actual_checksum = self._calculate_checksum(checkpoint.get('system_state', {}))
+            
+            return expected_checksum == actual_checksum
+            
+        except Exception as e:
+            log_error(f"验证检查点失败: {e}")
+            return False
+    
+    def _calculate_checksum(self, data: Dict[str, Any]) -> str:
+        """计算数据校验和"""
+        import hashlib
+        data_str = json.dumps(data, sort_keys=True)
+        return hashlib.md5(data_str.encode()).hexdigest()
+    
+    def _cleanup_old_checkpoints(self):
+        """清理旧的检查点"""
+        try:
+            checkpoints = self._list_checkpoints()
+            
+            for old_checkpoint in checkpoints[self.max_checkpoints:]:
+                try:
+                    os.remove(old_checkpoint['filepath'])
+                    log_info(f"🗑️ 删除旧检查点: {old_checkpoint['id']}")
+                except Exception as e:
+                    log_warning(f"删除检查点失败: {e}")
+                    
+        except Exception as e:
+            log_error(f"清理检查点失败: {e}")
+    
+    def get_last_checkpoint(self) -> Optional[Dict[str, Any]]:
+        """获取最新的检查点"""
+        checkpoints = self._list_checkpoints()
+        return checkpoints[0] if checkpoints else None
+
+class EnhancedSystemMonitor:
+    """增强系统监控器"""
+    
+    def __init__(self):
+        self.metrics = {
+            'start_time': time.time(),
+            'api_calls': 0,
+            'trades_executed': 0,
+            'errors_count': 0,
+            'warnings_count': 0,
+            'memory_usage': [],
+            'cpu_usage': [],
+            'network_latency': [],
+            'performance_metrics': {}
+        }
+        self.lock = threading.Lock()
+        self.monitoring_enabled = True
+        
+    def start_monitoring(self):
+        """启动监控"""
+        self.monitoring_enabled = True
+        self._start_background_monitoring()
+        log_info("🚀 系统监控已启动")
+    
+    def stop_monitoring(self):
+        """停止监控"""
+        self.monitoring_enabled = False
+        log_info("🛑 系统监控已停止")
+    
+    def increment_counter(self, counter_name: str, value: int = 1):
+        """增加计数器"""
+        with self.lock:
+            if counter_name in self.metrics:
+                self.metrics[counter_name] += value
+            else:
+                self.metrics[counter_name] = value
+    
+    def record_metric(self, metric_name: str, value: Any):
+        """记录指标"""
+        with self.lock:
+            self.metrics[metric_name] = value
+    
+    def get_system_status(self) -> Dict[str, Any]:
+        """获取系统状态"""
+        with self.lock:
+            uptime = time.time() - self.metrics['start_time']
+            
+            return {
+                'uptime': self._format_uptime(uptime),
+                'uptime_seconds': uptime,
+                'api_calls': self.metrics['api_calls'],
+                'trades_executed': self.metrics['trades_executed'],
+                'errors_count': self.metrics['errors_count'],
+                'warnings_count': self.metrics['warnings_count'],
+                'requests_per_minute': self.metrics['api_calls'] / max(uptime / 60, 1),
+                'trades_per_hour': self.metrics['trades_executed'] / max(uptime / 3600, 1),
+                'error_rate': self.metrics['errors_count'] / max(self.metrics['api_calls'], 1),
+                'system_health': self._calculate_health_score(),
+                'timestamp': datetime.now().isoformat()
+            }
+    
+    def _format_uptime(self, seconds: float) -> str:
+        """格式化运行时间"""
+        days = int(seconds // 86400)
+        hours = int((seconds % 86400) // 3600)
+        minutes = int((seconds % 3600) // 60)
+        
+        if days > 0:
+            return f"{days}天{hours}小时{minutes}分钟"
+        elif hours > 0:
+            return f"{hours}小时{minutes}分钟"
+        else:
+            return f"{minutes}分钟"
+    
+    def _calculate_health_score(self) -> float:
+        """计算系统健康分数"""
+        if self.metrics['api_calls'] == 0:
+            return 100.0
+        
+        error_rate = self.metrics['errors_count'] / self.metrics['api_calls']
+        
+        if error_rate < 0.01:
+            return 100.0
+        elif error_rate < 0.05:
+            return 90.0
+        elif error_rate < 0.1:
+            return 75.0
+        elif error_rate < 0.2:
+            return 50.0
+        else:
+            return 25.0
+    
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """获取性能指标"""
+        return {
+            'memory_usage': self._get_memory_usage(),
+            'cpu_usage': self._get_cpu_usage(),
+            'disk_usage': self._get_disk_usage(),
+            'network_stats': self._get_network_stats(),
+            'process_stats': self._get_process_stats()
+        }
+    
+    def _get_memory_usage(self) -> Dict[str, float]:
+        """获取内存使用情况"""
+        try:
+            import psutil
+            memory = psutil.virtual_memory()
+            return {
+                'total_gb': memory.total / (1024**3),
+                'used_gb': memory.used / (1024**3),
+                'available_gb': memory.available / (1024**3),
+                'percent': memory.percent
+            }
+        except ImportError:
+            return {'total_gb': 0, 'used_gb': 0, 'available_gb': 0, 'percent': 0}
+    
+    def _get_cpu_usage(self) -> Dict[str, float]:
+        """获取CPU使用情况"""
+        try:
+            import psutil
+            return {
+                'cpu_percent': psutil.cpu_percent(interval=1),
+                'cpu_count': psutil.cpu_count(),
+                'load_average': psutil.getloadavg()[0] if hasattr(psutil, 'getloadavg') else 0
+            }
+        except ImportError:
+            return {'cpu_percent': 0, 'cpu_count': 1, 'load_average': 0}
+    
+    def _get_disk_usage(self) -> Dict[str, float]:
+        """获取磁盘使用情况"""
+        try:
+            import psutil
+            disk = psutil.disk_usage('/')
+            return {
+                'total_gb': disk.total / (1024**3),
+                'used_gb': disk.used / (1024**3),
+                'free_gb': disk.free / (1024**3),
+                'percent': disk.percent
+            }
+        except ImportError:
+            return {'total_gb': 0, 'used_gb': 0, 'free_gb': 0, 'percent': 0}
+    
+    def _get_network_stats(self) -> Dict[str, int]:
+        """获取网络统计"""
+        try:
+            import psutil
+            net_io = psutil.net_io_counters()
+            return {
+                'bytes_sent': net_io.bytes_sent,
+                'bytes_recv': net_io.bytes_recv,
+                'packets_sent': net_io.packets_sent,
+                'packets_recv': net_io.packets_recv
+            }
+        except ImportError:
+            return {'bytes_sent': 0, 'bytes_recv': 0, 'packets_sent': 0, 'packets_recv': 0}
+    
+    def _get_process_stats(self) -> Dict[str, int]:
+        """获取进程统计"""
+        try:
+            import psutil
+            process = psutil.Process()
+            return {
+                'pid': process.pid,
+                'memory_mb': process.memory_info().rss / (1024**2),
+                'cpu_percent': process.cpu_percent(),
+                'threads': process.num_threads()
+            }
+        except ImportError:
+            return {'pid': 0, 'memory_mb': 0, 'cpu_percent': 0, 'threads': 0}
+    
+    def _start_background_monitoring(self):
+        """启动后台监控"""
+        def monitor_worker():
+            while self.monitoring_enabled:
+                try:
+                    # 收集系统指标
+                    performance = self.get_performance_metrics()
+                    
+                    # 记录内存和CPU使用
+                    if 'memory_usage' in performance:
+                        self.metrics['memory_usage'].append(performance['memory_usage'])
+                        if len(self.metrics['memory_usage']) > 100:
+                            self.metrics['memory_usage'].pop(0)
+                    
+                    if 'cpu_usage' in performance:
+                        self.metrics['cpu_usage'].append(performance['cpu_usage'])
+                        if len(self.metrics['cpu_usage']) > 100:
+                            self.metrics['cpu_usage'].pop(0)
+                    
+                    # 每30秒收集一次
+                    time.sleep(30)
+                    
+                except Exception as e:
+                    log_error(f"后台监控异常: {e}")
+                    time.sleep(60)
+        
+        # 启动后台线程
+        monitor_thread = threading.Thread(target=monitor_worker, daemon=True)
+        monitor_thread.start()
+    
+    def generate_system_report(self) -> Dict[str, Any]:
+        """生成系统报告"""
+        return {
+            'system_status': self.get_system_status(),
+            'performance_metrics': self.get_performance_metrics(),
+            'error_summary': {
+                'total_errors': self.metrics['errors_count'],
+                'total_warnings': self.metrics['warnings_count'],
+                'error_categories': self._get_error_categories()
+            },
+            'recommendations': self._generate_recommendations()
+        }
+    
+    def _get_error_categories(self) -> Dict[str, int]:
+        """获取错误分类统计"""
+        # 简化实现，实际应该从错误日志中分析
+        return {
+            'network': 0,
+            'api': 0,
+            'data': 0,
+            'system': 0,
+            'strategy': 0
+        }
+    
+    def _generate_recommendations(self) -> List[str]:
+        """生成系统建议"""
+        recommendations = []
+        
+        # 基于健康分数生成建议
+        health_score = self._calculate_health_score()
+        
+        if health_score < 50:
+            recommendations.append("系统健康分数较低，建议检查错误日志")
+        
+        if self.metrics['errors_count'] > 10:
+            recommendations.append("错误数量较多，建议重启系统或检查配置")
+        
+        if len(self.metrics['memory_usage']) > 0:
+            last_memory = self.metrics['memory_usage'][-1]
+            if last_memory.get('percent', 0) > 80:
+                recommendations.append("内存使用率过高，建议重启系统")
+        
+        if not recommendations:
+            recommendations.append("系统运行正常，继续保持监控")
+        
+        return recommendations
+
 # 全局工具实例
 cache_manager = CacheManager()
 memory_manager = MemoryManager()
 system_monitor = SystemMonitor()
+enhanced_system_monitor = EnhancedSystemMonitor()
 data_validator = DataValidator()
 json_helper = JSONHelper()
 time_helper = TimeHelper()
 logger_helper = LoggerHelper()
+error_recovery = ErrorRecoveryManager()
+recovery_engine = RecoveryEngine()
+state_persistence = StatePersistence()
+recovery_engine = RecoveryEngine()
+checkpoint_manager = CheckpointManager()
