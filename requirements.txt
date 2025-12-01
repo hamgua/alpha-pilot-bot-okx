@@ -8,3 +8,4 @@ urllib3
 streamlit
 plotly
 numpy
+aiohttp

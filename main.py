@@ -23,6 +23,8 @@ from utils import (
 from logger_config import log_info, log_warning, log_error
 from trade_logger import trade_logger
 from data_manager import update_system_status, save_trade_record
+from ai_client import ai_client
+import asyncio
 
 class AlphaArenaBot:
     """Alpha Arena OKX 交易机器人主类"""
@@ -72,7 +74,26 @@ class AlphaArenaBot:
         log_info("📊 获取新的AI信号...")
         
         try:
-            signal_data = self._generate_ai_signal(market_data)
+            # 检查是否启用多AI模式
+            use_multi_ai = config.get('ai', 'use_multi_ai')
+            
+            if use_multi_ai:
+                # 多AI模式
+                providers = ['deepseek', 'kimi']
+                signals = asyncio.run(ai_client.get_multi_ai_signals(market_data, providers))
+                
+                if signals:
+                    signal_data = ai_client.fuse_signals(signals)
+                    log_info("📊 【多AI融合信号分析】")
+                    log_info(f"   📈 最终信号: {signal_data['signal']}")
+                    log_info(f"   💡 融合信心: {signal_data['confidence']:.1f}")
+                else:
+                    # 如果多AI失败，使用回退信号
+                    signal_data = self._create_fallback_signal(market_data)
+                    log_warning("多AI信号获取失败，使用回退信号")
+            else:
+                # 单AI模式 - 使用简化版
+                signal_data = self._generate_ai_signal(market_data)
             
             # 缓存信号
             cache_manager.set(cache_key, signal_data, config.get('ai', 'cache_duration'))

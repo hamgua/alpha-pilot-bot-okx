@@ -12,7 +12,7 @@ def check_dependencies():
     """检查依赖"""
     required_modules = [
         'ccxt', 'numpy', 'pandas', 'requests', 'python-dotenv',
-        'openai', 'aiohttp', 'asyncio', 'datetime', 'json', 'threading'
+        'openai', 'aiohttp', 'asyncio', 'json', 'threading'
     ]
     
     missing_modules = []
