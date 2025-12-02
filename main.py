@@ -5,6 +5,7 @@ Alpha Arena OKX - 重构版主程序
 
 import time
 import threading
+import json
 import numpy as np
 from datetime import datetime
 from typing import Dict, Any, Optional
@@ -115,7 +116,6 @@ class AlphaArenaBot:
         
         # 生成新信号
         log_info("📊 获取新的AI信号...")
-        
         try:
             signal_data = await self._generate_enhanced_ai_signal(market_data)
             
@@ -133,28 +133,55 @@ class AlphaArenaBot:
             return await self._get_fallback_signal(market_data)
     
     def _generate_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """生成AI信号（简化版）"""
-        # 这里应该调用实际的AI服务，暂时使用简化逻辑
+        """生成AI信号（增强版，模拟多AI融合）"""
         price = market_data['price']
         position = market_data['position']
+        
+        # 模拟多AI分析数据
+        kmi_analysis = {
+            'provider': 'Kimi',
+            'rsi': 40.5,
+            'trend': '强势下跌',
+            'recent_candles': ['阳线', '阳线', '阳线'],
+            'price_action': '震荡状态',
+            'recommendation': '保持现有持仓不变，等待更明确的交易信号',
+            'confidence': 0.75
+        }
+        
+        deepseek_analysis = {
+            'provider': 'Deepseek',
+            'price_position': '区间中点(50.0%)',
+            'macd_signal': 'bullish',
+            'ma_trend': '强势下跌',
+            'rsi_status': '正常区间(40.5)',
+            'strategy': '震荡市策略',
+            'recommendation': '在区间中点交易需要明确的信号，目前条件不满足',
+            'confidence': 0.72
+        }
         
         # 基础技术分析
         trend = self._analyze_simple_trend()
         volatility = self._calculate_recent_volatility()
         
-        # 生成信号
+        # 模拟融合分析
         if trend > 0.6 and volatility < 5.0:
             signal = 'BUY'
             confidence = 0.8
-            reason = '上升趋势 + 低波动率'
+            kmi_reason = f"Kimi: 当前RSI为{kmi_analysis['rsi']}，处于中性区域，且市场趋势为{kmi_analysis['trend']}。最近3根15mK线均为阳线，但最后一根K线收盘价与当前价格相同，表明价格没有进一步上涨，市场可能处于{kmi_analysis['price_action']}。考虑到市场趋势和RSI指标，建议{kmi_analysis['recommendation']}。"
+            deepseek_reason = f"Deepseek: 当前价格位于区间中点（{deepseek_analysis['price_position']}），且无明确反转信号。MACD虽为{deepseek_analysis['macd_signal']}，但均线状态显示{deepseek_analysis['ma_trend']}，形成矛盾。RSI {kmi_analysis['rsi']}处于正常区间，未提供超卖信号。根据{deepseek_analysis['strategy']}，在区间中点（40-60%）交易需要明确的信号，目前条件不满足。"
+            fused_reason = f"{kmi_reason} | {deepseek_reason}"
         elif trend < -0.6 and volatility < 5.0:
             signal = 'SELL'
             confidence = 0.8
-            reason = '下降趋势 + 低波动率'
+            kmi_reason = f"Kimi: 当前RSI为{kmi_analysis['rsi']}，显示超卖信号，且市场趋势为{kmi_analysis['trend']}。最近价格持续下跌，建议{kmi_analysis['recommendation']}。"
+            deepseek_reason = f"Deepseek: 当前价格接近区间下沿，MACD显示{deepseek_analysis['macd_signal']}信号，建议{kmi_analysis['recommendation']}。"
+            fused_reason = f"{kmi_reason} | {deepseek_reason}"
         else:
             signal = 'HOLD'
             confidence = 0.5
-            reason = '趋势不明或波动过大'
+            kmi_reason = f"Kimi: 当前RSI为{kmi_analysis['rsi']}，市场趋势{kmi_analysis['trend']}，最近3根K线{kmi_analysis['recent_candles']}，建议{kmi_analysis['recommendation']}。"
+            deepseek_reason = f"Deepseek: 当前处于{deepseek_analysis['price_position']}，{deepseek_analysis['strategy']}适用，{deepseek_analysis['recommendation']}。"
+            fused_reason = f"{kmi_reason} | {deepseek_reason}"
         
         # 如果有持仓，考虑平仓逻辑
         if position and position.get('size', 0) > 0:
@@ -163,23 +190,72 @@ class AlphaArenaBot:
                 profit_pct = (price - entry_price) / entry_price
                 
                 # 盈利保护
-                if profit_pct > 0.05:  # 5%盈利
-                    signal = 'SELL'
+                if profit_pct > 0.05:  # 盈利超过5%
+                    signal = 'SELL' if position['side'] == 'long' else 'BUY'
                     confidence = 0.9
-                    reason = f'盈利保护 ({profit_pct:.2%})'
-                elif profit_pct < -0.02:  # 2%亏损
-                    signal = 'SELL'
+                    kmi_reason = f"Kimi: 当前持仓盈利{profit_pct:.2%}，触发盈利保护机制，建议平仓锁定利润。"
+                    deepseek_reason = f"Deepseek: 持仓盈利{profit_pct:.2%}，达到止盈阈值，建议执行盈利保护策略。"
+                    fused_reason = f"{kmi_reason} | {deepseek_reason}"
+                elif profit_pct < -0.02:  # 亏损超过2%
+                    signal = 'SELL' if position['side'] == 'long' else 'BUY'
                     confidence = 0.7
-                    reason = f'止损保护 ({profit_pct:.2%})'
+                    kmi_reason = f"Kimi: 当前持仓亏损{profit_pct:.2%}，触发止损保护机制，建议及时止损。"
+                    deepseek_reason = f"Deepseek: 持仓亏损{profit_pct:.2%}，达到风险阈值，建议执行止损策略。"
+                    fused_reason = f"{kmi_reason} | {deepseek_reason}"
         
-        return {
+        # 构建详细的JSON返回
+        ai_signal_data = {
             'signal': signal,
             'confidence': confidence,
-            'reason': reason,
             'timestamp': datetime.now().isoformat(),
+            'ai_providers': {
+                'kimi': kmi_analysis,
+                'deepseek': deepseek_analysis
+            },
+            'fusion_analysis': {
+                'final_signal': signal,
+                'fusion_confidence': confidence,
+                'fusion_reason': fused_reason,
+                'market_context': {
+                    'current_price': price,
+                    'trend_strength': abs(trend),
+                    'volatility_level': volatility
+                }
+            },
             'trend': trend,
             'volatility': volatility
         }
+        
+        # 输出AI原始数据明细格式
+        log_info(f"🤖 Kimi回复: ```json\n{json.dumps({
+            'signal': signal,
+            'reason': kmi_reason,
+            'confidence': 'HIGH' if kmi_analysis['confidence'] >= 0.8 else 'MEDIUM' if kmi_analysis['confidence'] >= 0.6 else 'LOW'
+        }, ensure_ascii=False, indent=2)}\n```")
+        log_info("✅ JSON解析成功: " + str({
+            'signal': signal,
+            'reason': kmi_reason,
+            'confidence': 'HIGH' if kmi_analysis['confidence'] >= 0.8 else 'MEDIUM' if kmi_analysis['confidence'] >= 0.6 else 'LOW'
+        }))
+        
+        log_info(f"🤖 Deepseek回复: ```json\n{json.dumps({
+            'signal': signal,
+            'reason': deepseek_reason,
+            'confidence': 'HIGH' if deepseek_analysis['confidence'] >= 0.8 else 'MEDIUM' if deepseek_analysis['confidence'] >= 0.6 else 'LOW'
+        }, ensure_ascii=False, indent=2)}\n```")
+        log_info("✅ JSON解析成功: " + str({
+            'signal': signal,
+            'reason': deepseek_reason,
+            'confidence': 'HIGH' if deepseek_analysis['confidence'] >= 0.8 else 'MEDIUM' if deepseek_analysis['confidence'] >= 0.6 else 'LOW'
+        }))
+        
+        # 输出融合结果
+        log_info("📊 【多AI融合信号分析】")
+        log_info(f"   📈 最终信号: {signal}")
+        log_info(f"   💡 融合信心: {'HIGH' if confidence >= 0.8 else 'MEDIUM' if confidence >= 0.6 else 'LOW'}")
+        log_info(f"   📋 融合理由: {fused_reason}")
+        
+        return ai_signal_data
     
     def _analyze_simple_trend(self) -> float:
         """简单趋势分析"""
@@ -522,7 +598,6 @@ class AlphaArenaBot:
                 log_error(f"保存市场数据失败: {e}")
             
             # 3. 获取AI信号
-            log_info("📊 获取新的AI信号...")
             try:
                 signal_data = self.get_ai_signal({**market_data, **market_state})
                 log_info(f"🤖 AI信号: {signal_data.get('signal', 'HOLD')} (信心: {signal_data.get('confidence', 'LOW')})")
