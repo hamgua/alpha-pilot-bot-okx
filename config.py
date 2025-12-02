@@ -46,6 +46,7 @@ class ConfigManager:
             'max_position_size': float(os.getenv('MAX_POSITION_SIZE', '0.01')),
             'min_trade_amount': float(os.getenv('MIN_TRADE_AMOUNT', '0.001')),
             'leverage': int(os.getenv('LEVERAGE', '10')),
+            'cycle_minutes': int(os.getenv('CYCLE_MINUTES', '15')),
             'margin_mode': 'cross',
             'position_mode': 'one_way',
             'allow_short_selling': os.getenv('ALLOW_SHORT_SELLING', 'false').lower() == 'true'
@@ -56,13 +57,13 @@ class ConfigManager:
         return {
             'profit_lock_strategy': {
                 'enabled': True,
-                'min_profit_pct': 0.005,
-                'consolidation_threshold': 0.008,
-                'lookback_periods': 6,
-                'consolidation_duration': 20,
+                'min_profit_pct': 0.01,
+                'consolidation_threshold': 0.01,
+                'lookback_periods': 24,  # 修改为24根K线（2小时）
+                'consolidation_duration': 120,  # 修改为120分钟（2小时）
                 'only_long_positions': True,
                 'volatility_adaptive': True,
-                'min_volume_threshold': 1000000,
+                'min_volume_threshold': 1000,
                 'max_consecutive_periods': 8,
                 'breakout_threshold': 0.012,
                 'time_decay_factor': 0.95,

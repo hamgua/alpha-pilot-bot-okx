@@ -7,7 +7,7 @@ import time
 import threading
 import json
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
 # 导入模块
@@ -25,6 +25,7 @@ from logger_config import log_info, log_warning, log_error
 from trade_logger import trade_logger
 from data_manager import update_system_status, save_trade_record, data_management_system
 from ai_client import ai_client
+from signal_executor import SignalExecutor
 import asyncio
 
 class AlphaArenaBot:
@@ -484,15 +485,37 @@ class AlphaArenaBot:
             # 更新暴跌保护系统的价格历史
             crash_protection.price_history = self.price_history[-20:]  # 保留最近20个价格
 
-            # 计算技术指标
-            atr_pct = market_analyzer.calculate_atr(
-                [market_data['price']] * 20,  # 简化版
-                [market_data['price']] * 20,
-                self.price_history,
-                14
-            )
+            # 使用真实的历史数据计算技术指标
+            try:
+                closes = price_history.get('close', [])
+                highs = price_history.get('high', [])
+                lows = price_history.get('low', [])
+                
+                if len(closes) >= 14 and len(highs) >= 14 and len(lows) >= 14:
+                    # 使用真实的OHLCV数据计算ATR
+                    atr_pct = market_analyzer.calculate_atr(highs, lows, closes, 14)
+                    if atr_pct is None or atr_pct <= 0:
+                        # 计算失败，使用简化计算
+                        if len(closes) >= 2:
+                            price_changes = [abs(closes[i] - closes[i-1]) for i in range(1, len(closes))]
+                            atr_pct = np.mean(price_changes) / closes[-1] * 100 if closes[-1] > 0 else 0.5
+                        else:
+                            atr_pct = 0.5  # 默认值
+                else:
+                    # 数据不足，使用简化计算
+                    if len(closes) >= 2:
+                        price_changes = [abs(closes[i] - closes[i-1]) for i in range(1, len(closes))]
+                        atr_pct = np.mean(price_changes) / closes[-1] * 100 if closes[-1] > 0 else 0.5
+                    else:
+                        atr_pct = 0.5  # 默认值
+                        
+            except Exception as e:
+                log_warning(f"ATR计算失败，使用默认值: {e}")
+                atr_pct = 0.5
 
-            trend_strength = market_analyzer.identify_trend(self.price_history)
+            # 识别趋势 - 使用收盘价数据
+            closes_for_trend = price_history.get('close', self.price_history)
+            trend_strength = market_analyzer.identify_trend(closes_for_trend)
 
             # 波动率分类
             if atr_pct > 3.0:
@@ -502,10 +525,19 @@ class AlphaArenaBot:
             else:
                 volatility = 'normal'
 
-            # 计算价格变化率
+            # 计算价格变化率 - 使用配置的K线周期
+            price_history_data = market_data.get('price_history', [])
             price_change_pct = 0
-            if len(self.price_history) >= 2:
-                price_change_pct = (market_data['price'] - self.price_history[-2]) / self.price_history[-2]
+            if len(price_history_data) >= 2:
+                previous_kline = price_history_data[-2]
+                previous_price = previous_kline.get('close', market_data['price'])
+                if previous_price > 0:
+                    price_change_pct = (market_data['price'] - previous_price) / previous_price
+            elif len(self.price_history) >= 2:
+                # 回退使用价格历史
+                previous_price = self.price_history[-2]
+                if previous_price > 0:
+                    price_change_pct = (market_data['price'] - previous_price) / previous_price
 
             # 检查横盘利润锁定
             should_lock_profit = False
@@ -568,8 +600,29 @@ class AlphaArenaBot:
                 return
             
             current_price = market_data.get('price', 0)
-            log_info(f"📈 BTC当前价格: ${current_price:,.2f}")
-            log_info(f"📊 数据周期: {config.get('exchange', 'timeframe')}")
+            
+            # 获取配置中的循环时间（支持自定义到整点执行）
+            cycle_minutes = config.get('trading', 'cycle_minutes', 15)
+            cycle_time = f"{cycle_minutes}m"
+            
+            # 使用真实K线数据计算价格变化
+            price_history = market_data.get('price_history', [])
+            if len(price_history) >= 2:
+                # 使用上一个完整K线的收盘价作为基准
+                previous_kline = price_history[-2]
+                previous_price = previous_kline.get('close', current_price)
+                price_change_pct = ((current_price - previous_price) / previous_price) * 100
+                
+                # 获取K线时间戳用于显示周期
+                kline_time = datetime.fromtimestamp(previous_kline.get('timestamp', 0)/1000)
+                log_info(f"上一个K线时间: {kline_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            else:
+                price_change_pct = 0.0
+                log_info("⚠️ 历史数据不足，价格变化显示为0.00%")
+            
+            log_info(f"BTC当前价格: ${current_price:,.2f}")
+            log_info(f"数据周期: {cycle_time}")
+            log_info(f"价格变化: {price_change_pct:+.2f}% (基于上一个{cycle_time}周期K线)")
             
             # 2. 分析市场状态
             log_info("🔍 分析市场状态...")
@@ -601,7 +654,13 @@ class AlphaArenaBot:
             try:
                 signal_data = self.get_ai_signal({**market_data, **market_state})
                 log_info(f"🤖 AI信号: {signal_data.get('signal', 'HOLD')} (信心: {signal_data.get('confidence', 'LOW')})")
-                log_info(f"💡 AI理由: {signal_data.get('reason', '无')}")
+                
+                # 使用多AI融合的详细理由
+                fusion_reason = signal_data.get('fusion_analysis', {}).get('fusion_reason', '')
+                if fusion_reason:
+                    log_info(f"💡 AI理由: {fusion_reason}")
+                else:
+                    log_info(f"💡 AI理由: {signal_data.get('reason', '无')}")
             except Exception as e:
                 log_error(f"获取AI信号失败: {e}")
                 return
@@ -618,30 +677,41 @@ class AlphaArenaBot:
                 return
             
             # 5. 执行交易决策
+            allow_short_selling = config.get('trading', 'allow_short_selling', False)
+            position = market_data.get('position')
+            
+            # 使用信号执行器处理所有信号场景
+            signal_executor = SignalExecutor(trading_engine, config)
+            
+            log_info(f"🎯 准备执行交易: {final_signal}")
+            try:
+                success = signal_executor.execute_signal(
+                    final_signal, signal_data, market_data, market_state
+                )
+                if success:
+                    log_info("✅ 信号执行完成")
+                else:
+                    log_warning("⚠️ 信号执行未完成或无需执行")
+            except Exception as e:
+                log_error(f"执行交易决策失败: {e}")
+            
+            # 6. 检查持仓止盈止损状态（仅在非HOLD信号时）
             if final_signal != 'HOLD':
-                log_info(f"🎯 准备执行交易: {final_signal}")
+                log_info("🔍 检查持仓止盈止损状态...")
                 try:
-                    self._execute_trade_signal(final_signal, signal_data, market_data, market_state)
+                    self._update_risk_management(market_data, market_state)
                 except Exception as e:
-                    log_error(f"执行交易决策失败: {e}")
-            else:
-                log_info("📊 当前无交易信号，保持观望")
+                    log_error(f"更新风险管理失败: {e}")
             
-            # 6. 更新风险管理
-            log_info("🔍 检查持仓止盈止损状态...")
-            try:
-                self._update_risk_management(market_data, market_state)
-            except Exception as e:
-                log_error(f"更新风险管理失败: {e}")
+            # 7. 检查横盘利润锁定（仅在非HOLD信号时）
+            if final_signal != 'HOLD':
+                log_info("🔒 检查横盘利润锁定...")
+                try:
+                    self._check_consolidation_profit_lock(market_data)
+                except Exception as e:
+                    log_error(f"检查横盘利润锁定失败: {e}")
             
-            # 7. 检查横盘利润锁定
-            log_info("🔒 检查横盘利润锁定...")
-            try:
-                self._check_consolidation_profit_lock(market_data)
-            except Exception as e:
-                log_error(f"检查横盘利润锁定失败: {e}")
-            
-            # 8. 系统维护
+            # 8. 系统维护（始终执行）
             log_info("🔧 执行系统维护...")
             try:
                 self._perform_system_maintenance()
@@ -733,7 +803,10 @@ class AlphaArenaBot:
         log_info(f"   - 交易方向: {signal}")
         log_info(f"   - 订单数量: {order_size:.4f} 张")
         log_info(f"   - 当前价格: ${current_price:.2f}")
-        log_info(f"   - 交易理由: {signal_data.get('reason', '策略信号')}")
+        # 使用多AI融合的详细理由作为交易理由
+        fusion_reason = signal_data.get('fusion_analysis', {}).get('fusion_reason', '')
+        trade_reason = fusion_reason if fusion_reason else signal_data.get('reason', '策略信号')
+        log_info(f"   - 交易理由: {trade_reason}")
         
         if order_size <= 0:
             log_warning("⚠️ 订单大小为0，跳过交易")
@@ -755,12 +828,12 @@ class AlphaArenaBot:
                 'size': order_size,
                 'stop_loss': tp_sl_params['stop_loss'],
                 'take_profit': tp_sl_params['take_profit'],
-                'reason': signal_data.get('reason', '策略信号'),
+                'reason': signal_data.get('fusion_analysis', {}).get('fusion_reason', signal_data.get('reason', '策略信号')),
                 'confidence': signal_data.get('confidence', 0.5)
             }
             
             try:
-                self.data_manager.save_trade_record(trade_record)
+                save_trade_record(trade_record)
                 log_info("📊 交易记录已保存")
             except Exception as e:
                 log_warning(f"保存交易记录失败: {e}")
@@ -774,7 +847,7 @@ class AlphaArenaBot:
                 'price': market_data['price'],
                 'size': order_size,
                 'confidence': signal_data['confidence'],
-                'reason': signal_data.get('reason', 'AI signal'),
+                'reason': signal_data.get('fusion_analysis', {}).get('fusion_reason', signal_data.get('reason', 'AI signal')),
                 'stop_loss': tp_sl_params['stop_loss'],
                 'take_profit': tp_sl_params['take_profit'],
                 'risk_level': tp_sl_params['risk_level'],
@@ -916,7 +989,12 @@ class AlphaArenaBot:
                 
             log_info(f"📊 获取价格历史数据: {len(price_history)} 条记录")
             
-            should_lock = consolidation_detector.should_lock_profit(position, market_data, price_history)
+            try:
+                should_lock = consolidation_detector.should_lock_profit(position, market_data, price_history)
+                log_info(f"✅ 横盘利润锁定条件: {should_lock}")
+            except Exception as e:
+                log_error(f"检查横盘利润锁定异常: {e}")
+                should_lock = False
             
             if should_lock:
                 log_info("✅ 横盘利润锁定条件满足")
@@ -934,7 +1012,7 @@ class AlphaArenaBot:
                 }
                 
                 try:
-                    self.data_manager.save_trade_record(lock_record)
+                    save_trade_record(lock_record)
                     log_info("📊 横盘锁定记录已保存")
                 except Exception as e:
                     log_warning(f"保存横盘锁定记录失败: {e}")
@@ -970,10 +1048,36 @@ class AlphaArenaBot:
 
     def _get_price_history_for_analysis(self) -> Dict[str, list]:
         """获取用于分析的价格历史数据"""
-        # 这里简化处理，实际应用中应该从交易所获取完整的历史数据
-        # 确保至少有6个数据点来避免None错误
-        min_data_points = max(6, len(self.price_history))
+        # 从交易所获取真实的历史K线数据
+        try:
+            timeframe = config.get('exchange', 'timeframe', '15m')
+            limit = max(50, 20)  # 确保获取足够的数据点
+            
+            # 使用交易引擎获取历史K线数据
+            ohlcv_data = trading_engine.get_price_history(timeframe, limit)
+            
+            if ohlcv_data and len(ohlcv_data) >= 6:
+                # 只在调试模式下显示详细日志
+                if config.get('debug', False):
+                    log_info(f"📊 获取价格历史数据: {len(ohlcv_data)} 条记录")
+                
+                # 提取OHLCV数据
+                closes = [kline['close'] for kline in ohlcv_data]
+                highs = [kline['high'] for kline in ohlcv_data]
+                lows = [kline['low'] for kline in ohlcv_data]
+                volumes = [kline['volume'] for kline in ohlcv_data]
+                
+                return {
+                    'close': closes,
+                    'high': highs,
+                    'low': lows,
+                    'volume': volumes
+                }
+            
+        except Exception as e:
+            log_error(f"获取历史K线数据失败: {e}")
         
+        # 回退到使用价格历史数据
         if len(self.price_history) == 0:
             # 如果没有历史数据，提供默认值
             current_price = 50000  # 默认BTC价格
@@ -987,19 +1091,32 @@ class AlphaArenaBot:
         
         data_slice = self.price_history[-20:] if len(self.price_history) >= 20 else self.price_history
         
-        log_info(f"📊 获取价格历史数据: {len(data_slice)} 条记录")
+        log_info(f"📊 使用价格历史数据: {len(data_slice)} 条记录")
         if len(data_slice) < 6:
             log_warning(f"⚠️ 价格历史数据不足: {len(data_slice)} 条，可能影响分析准确性")
         
+        # 创建模拟的OHLCV数据
+        closes = list(data_slice)
+        highs = [p * 1.001 for p in data_slice]
+        lows = [p * 0.999 for p in data_slice]
+        volumes = [1000000] * len(data_slice)
+        
         return {
-            'close': data_slice,
-            'high': data_slice,
-            'low': data_slice,
-            'volume': [1000000] * len(data_slice)
+            'close': closes,
+            'high': highs,
+            'low': lows,
+            'volume': volumes
         }
     
     def _perform_system_maintenance(self):
         """执行系统维护"""
+        # 清理内存缓存
+        cache_manager.cleanup_expired()
+        
+        # 清理价格历史缓存
+        if len(self.price_history) > 1000:
+            self.price_history = self.price_history[-500:]
+        
         # 内存管理
         if self.current_cycle % 10 == 0:  # 每10轮清理一次
             memory_stats = memory_manager.get_memory_stats()
@@ -1039,6 +1156,44 @@ class AlphaArenaBot:
             except Exception as e:
                 log_error(f"清理旧数据失败: {e}")
     
+    def _calculate_next_cycle_time(self) -> float:
+        """计算下一个整点执行时间"""
+        cycle_minutes = config.get('trading', 'cycle_minutes', 15)
+        now = datetime.now()
+        
+        # 计算下一个周期时间
+        current_minute = now.minute
+        next_cycle_minute = ((current_minute // cycle_minutes) + 1) * cycle_minutes
+        
+        if next_cycle_minute >= 60:
+            # 跨小时处理
+            next_hour = now.hour + 1
+            next_cycle_minute = 0
+            if next_hour >= 24:
+                next_hour = 0
+                next_day = now.day + 1
+            else:
+                next_day = now.day
+        else:
+            next_hour = now.hour
+            next_day = now.day
+        
+        try:
+            next_time = now.replace(day=next_day, hour=next_hour, minute=next_cycle_minute, second=0, microsecond=0)
+            if next_time <= now:
+                # 如果计算出的时间已经过去，加一小时
+                next_time += timedelta(hours=1)
+            
+            # 计算等待秒数
+            wait_seconds = (next_time - now).total_seconds()
+            return max(wait_seconds, 1)  # 至少等待1秒
+            
+        except ValueError:
+            # 处理月底跨月的情况
+            next_time = now + timedelta(minutes=cycle_minutes - (now.minute % cycle_minutes))
+            wait_seconds = (next_time - now).total_seconds()
+            return max(wait_seconds, 1)
+    
     def run(self):
         """运行交易机器人"""
         try:
@@ -1049,10 +1204,14 @@ class AlphaArenaBot:
                 try:
                     self.execute_trading_cycle()
                     
-                    # 等待下个周期
-                    sleep_time = time_helper.get_time_until_next(15)  # 15分钟周期
-                    log_info(f"⏰ 等待下次循环: {sleep_time:.1f}秒")
-                    time.sleep(sleep_time)
+                    # 计算下一个整点执行时间
+                    wait_seconds = self._calculate_next_cycle_time()
+                    next_run_time = datetime.now() + timedelta(seconds=wait_seconds)
+                    
+                    log_info(f"⏰ 下次执行时间: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    log_info(f"⏰ 等待 {int(wait_seconds)} 秒...")
+                    
+                    time.sleep(wait_seconds)
                     
                 except KeyboardInterrupt:
                     log_info("🛑 收到停止信号，正在关闭...")

@@ -483,44 +483,107 @@ class ConsolidationDetector:
     
     def should_lock_profit(self, position: Dict[str, Any], market_data: Dict[str, Any], 
                           price_history: Dict[str, list]) -> bool:
-        """基于6维度判断的横盘利润锁定决策"""
+        """基于6维度判断的横盘利润锁定决策 - 使用2小时区间"""
         
         if not self._basic_checks(position, market_data):
             return False
         
-        # 6维度综合评估
+        # 6维度综合评估 - 基于2小时数据
         score = 0
         total_checks = 6
         
-        # 1. 盈利状态检查
-        if self._check_profit_status(position, market_data):
+        # 计算实际使用的K线数量和时间区间
+        prices = price_history.get('close', [])
+        actual_periods = min(len(prices), self.config.get('lookback_periods', 24))
+        covered_hours = (actual_periods * 5) / 60  # 转换为小时
+        
+        # 执行所有检查并记录状态
+        conditions = []
+        
+        # [1] 盈利状态检查
+        profit_check = self._check_profit_status(position, market_data)
+        conditions.append(('盈利检查', profit_check))
+        if profit_check:
             score += 1
         
-        # 2. 波动率计算与分析
-        if self._analyze_volatility(price_history):
+        # [2] 波动率计算与分析
+        volatility_check = self._analyze_volatility(price_history)
+        conditions.append(('波动率检查', volatility_check))
+        if volatility_check:
             score += 1
         
-        # 3. 时间序列模式识别
-        if self._recognize_time_series_pattern(price_history):
+        # [3] 时间序列模式识别
+        pattern_check = self._recognize_time_series_pattern(price_history)
+        conditions.append(('时间序列模式', pattern_check))
+        if pattern_check:
             score += 1
         
-        # 4. 形态学分析
-        if self._analyze_patterns(price_history):
+        # [4] 形态学分析
+        morphology_check = self._analyze_patterns(price_history)
+        conditions.append(('形态学分析', morphology_check))
+        if morphology_check:
             score += 1
         
-        # 5. 成交量验证
-        if self._validate_volume(price_history):
+        # [5] 成交量验证
+        volume_check = self._validate_volume(price_history)
+        conditions.append(('成交量验证', volume_check))
+        if volume_check:
             score += 1
         
-        # 6. 触发条件综合判断
-        if self._evaluate_trigger_conditions(price_history, market_data):
+        # [6] 触发条件综合判断
+        trigger_check = self._evaluate_trigger_conditions(price_history, market_data)
+        conditions.append(('触发条件评估', trigger_check))
+        if trigger_check:
             score += 1
         
         # 需要满足4项以上条件
         should_lock = score >= 4
         
+        # 记录所有条件状态，包含时间区间信息
+        log_info(f"📊 横盘利润锁定检查: 满足{score}/{total_checks}项条件 (基于{covered_hours:.1f}小时数据)")
+        
+        # 显示满足和未满足的条件
+        for i, (condition_name, status) in enumerate(conditions, 1):
+            status_icon = "✅" if status else "❌"
+            log_info(f"[{i}] {status_icon} {condition_name}: {'通过' if status else '未通过'}")
+        
+        # 显示未满足的条件
+        unmet_conditions = [name for name, status in conditions if not status]
+        if unmet_conditions:
+            log_info(f"❗ 未满足条件: {', '.join(unmet_conditions)}")
+        
+        # 显示价格区间和利润区间信息
+        if prices and len(prices) >= actual_periods:
+            recent_prices = prices[-actual_periods:]
+            if recent_prices:
+                min_price = min(recent_prices)
+                max_price = max(recent_prices)
+                price_range = max_price - min_price
+                amplitude_pct = (price_range/max_price)*100
+                
+                # 计算利润信息
+                entry_price = position.get('entry_price', 0) if position else 0
+                if entry_price > 0:
+                    current_price = max(recent_prices)  # 使用最新价格
+                    profit_pct = abs(current_price - entry_price) / entry_price * 100
+                    
+                    # 获取锁定阈值用于显示
+                    lock_threshold = self.config.get('min_profit_pct', 0.005)
+                    consolidation_threshold = self.config.get('consolidation_threshold', 0.008)
+                    
+                    log_info(f"📈 价格区间: {min_price:.2f} - {max_price:.2f}，当前振幅: {amplitude_pct:.2f}%(≤{consolidation_threshold*100:.2f}%波动)")
+                    log_info(f"💰 利润区间: 入场价{entry_price:.2f} → 当前价{current_price:.2f}，当前盈利{profit_pct:.2f}% (≥{lock_threshold*100:.2f}%盈利)")
+        
         if should_lock:
-            log_info(f"🔒 横盘利润锁定触发: 满足{score}/{total_checks}项条件")
+            # 获取当前价格用于锁定显示
+            current_price = market_data.get('price', 0)
+            entry_price = position.get('entry_price', 0) if position else 0
+            if entry_price > 0 and current_price > 0:
+                actual_profit_pct = abs(current_price - entry_price) / entry_price * 100
+                lock_amount = (current_price - entry_price) * position.get('size', 0) if position else 0
+                log_info(f"🔒 横盘利润锁定触发: 满足{score}/{total_checks}项条件 (2小时区间)")
+            else:
+                log_info(f"🔒 横盘利润锁定触发: 满足{score}/{total_checks}项条件 (2小时区间)")
         
         return should_lock
     
@@ -565,6 +628,8 @@ class ConsolidationDetector:
             
             if meets_profit:
                 log_info(f"✅ 盈利检查通过: 当前盈利{profit_pct:.2%} ≥ 最小阈值{min_profit:.2%}")
+            else:
+                log_info(f"❌ 盈利检查未通过: 当前盈利{profit_pct:.2%} < 最小阈值{min_profit:.2%}")
             
             return meets_profit
         except Exception as e:
@@ -572,7 +637,7 @@ class ConsolidationDetector:
             return False
     
     def _analyze_volatility(self, price_history: Dict[str, list]) -> bool:
-        """波动率计算与分析"""
+        """波动率计算与分析 - 基于2小时区间"""
         try:
             if not price_history or not isinstance(price_history, dict):
                 return False
@@ -581,7 +646,7 @@ class ConsolidationDetector:
             if not isinstance(prices, list) or len(prices) < 6:
                 return False
             
-            lookback_periods = self.config.get('lookback_periods', 6)
+            lookback_periods = self.config.get('lookback_periods', 24)  # 2小时=24根5分钟K线
             recent_prices = prices[-lookback_periods:]
             
             # 计算ATR
@@ -613,6 +678,8 @@ class ConsolidationDetector:
                 
                 if meets_volatility:
                     log_info(f"✅ 波动率检查通过: 当前波动率{volatility_pct:.2f}% ≤ 阈值{consolidation_threshold*100:.2f}%")
+                else:
+                    log_info(f"❌ 波动率检查未通过: 当前波动率{volatility_pct:.2f}% > 阈值{consolidation_threshold*100:.2f}%")
                 
                 return meets_volatility
             
@@ -622,7 +689,7 @@ class ConsolidationDetector:
             return False
     
     def _recognize_time_series_pattern(self, price_history: Dict[str, list]) -> bool:
-        """时间序列模式识别"""
+        """时间序列模式识别 - 基于2小时区间"""
         try:
             if not price_history or not isinstance(price_history, dict):
                 return False
@@ -631,13 +698,13 @@ class ConsolidationDetector:
             if not isinstance(prices, list) or len(prices) < 6:
                 return False
             
-            lookback_periods = self.config.get('lookback_periods', 6)
+            lookback_periods = self.config.get('lookback_periods', 24)  # 2小时=24根5分钟K线
             recent_prices = prices[-lookback_periods:]
             
             if not recent_prices:
                 return False
                 
-            # 价格通道计算
+            # 价格通道计算 - 使用2小时区间
             max_price = max(recent_prices)
             min_price = min(recent_prices)
             
@@ -649,8 +716,13 @@ class ConsolidationDetector:
             consolidation_threshold = self.config.get('consolidation_threshold', 0.008)
             meets_pattern = channel_width <= consolidation_threshold
             
+            # 计算实际覆盖的时间区间（分钟）
+            covered_minutes = len(recent_prices) * 5  # 每根K线5分钟
+            
             if meets_pattern:
-                log_info(f"✅ 时间序列模式检查通过: 通道宽度{channel_width:.2%} ≤ 阈值{consolidation_threshold:.2%}")
+                log_info(f"✅ 时间序列模式检查通过: 通道宽度{channel_width:.2%} ≤ 阈值{consolidation_threshold:.2%} (覆盖{covered_minutes}分钟)")
+            else:
+                log_info(f"❌ 时间序列模式检查未通过: 通道宽度{channel_width:.2%} > 阈值{consolidation_threshold:.2%} (覆盖{covered_minutes}分钟)")
             
             return meets_pattern
         except Exception as e:
@@ -658,7 +730,7 @@ class ConsolidationDetector:
             return False
     
     def _analyze_patterns(self, price_history: Dict[str, list]) -> bool:
-        """形态学分析 - 支撑阻力位识别"""
+        """形态学分析 - 支撑阻力位识别 - 基于2小时区间"""
         try:
             if not price_history or not isinstance(price_history, dict):
                 return False
@@ -667,7 +739,7 @@ class ConsolidationDetector:
             if not isinstance(prices, list) or len(prices) < 6:
                 return False
             
-            lookback_periods = self.config.get('lookback_periods', 6)
+            lookback_periods = self.config.get('lookback_periods', 24)  # 2小时=24根5分钟K线
             recent_prices = prices[-lookback_periods:]
             
             if not recent_prices or len(recent_prices) < 3:
@@ -695,6 +767,8 @@ class ConsolidationDetector:
             
             if meets_patterns:
                 log_info(f"✅ 形态学分析通过: 支撑阻力密度{density_ratio:.2%}")
+            else:
+                log_info(f"❌ 形态学分析未通过: 支撑阻力密度{density_ratio:.2%} < 20.00%")
             
             return meets_patterns
         except Exception as e:
@@ -702,7 +776,7 @@ class ConsolidationDetector:
             return False
     
     def _validate_volume(self, price_history: Dict[str, list]) -> bool:
-        """成交量验证"""
+        """成交量验证 - 基于2小时区间"""
         try:
             if not price_history or not isinstance(price_history, dict):
                 return False
@@ -711,7 +785,7 @@ class ConsolidationDetector:
             if not isinstance(volumes, list) or len(volumes) < 6:
                 return False
             
-            lookback_periods = self.config.get('lookback_periods', 6)
+            lookback_periods = self.config.get('lookback_periods', 24)  # 2小时=24根5分钟K线
             recent_volumes = volumes[-lookback_periods:] if len(volumes) >= lookback_periods else volumes
             
             if not recent_volumes:
@@ -730,8 +804,15 @@ class ConsolidationDetector:
             
             meets_volume = current_volume >= min_volume_threshold and volume_ratio >= 0.5
             
+            # 计算2小时区间的平均成交量
+            covered_hours = len(recent_volumes) * 5 / 60  # 转换为小时
+            
             if meets_volume:
-                log_info(f"✅ 成交量验证通过: 当前成交量{current_volume:,.0f} ≥ 最小阈值{min_volume_threshold:,.0f}")
+                log_info(f"✅ 成交量验证通过: 当前成交量{current_volume:,.0f} ≥ 最小阈值{min_volume_threshold:,.0f} (2小时平均)")
+                log_info(f"📊 2小时成交量统计: 平均{avg_volume:,.0f} 当前{current_volume:,.0f} 比率{volume_ratio:.2f}")
+            else:
+                log_info(f"❌ 成交量验证未通过: 当前成交量{current_volume:,.0f} < 最小阈值{min_volume_threshold:,.0f} (2小时标准)")
+                log_info(f"📉 成交量缺口: 需要增加{min_volume_threshold - current_volume:,.0f} 当前为{current_volume/avg_volume:.1f}倍平均值")
             
             return meets_volume
         except Exception as e:
@@ -739,7 +820,7 @@ class ConsolidationDetector:
             return False
     
     def _evaluate_trigger_conditions(self, price_history: Dict[str, list], market_data: Dict[str, Any]) -> bool:
-        """触发条件综合判断"""
+        """触发条件综合判断 - 基于2小时区间"""
         try:
             if not price_history or not isinstance(price_history, dict):
                 return False
@@ -753,8 +834,8 @@ class ConsolidationDetector:
             if len(valid_prices) < 3:
                 return False
             
-            # 横盘持续时间检查
-            consolidation_duration = self.config.get('consolidation_duration', 20)
+            # 横盘持续时间检查 - 2小时
+            consolidation_duration = self.config.get('consolidation_duration', 120)  # 120分钟
             max_consecutive = self.config.get('max_consecutive_periods', 8)
             
             # 突破阈值检查
@@ -763,8 +844,8 @@ class ConsolidationDetector:
             # 时间衰减因子
             time_decay = self.config.get('time_decay_factor', 0.95)
             
-            # 综合评分计算
-            recent_prices = valid_prices[-6:]  # 30分钟数据
+            # 综合评分计算 - 使用2小时数据
+            recent_prices = valid_prices[-24:]  # 2小时=24根5分钟K线
             if len(recent_prices) < 2:
                 return False
                 
@@ -778,6 +859,8 @@ class ConsolidationDetector:
             
             if meets_conditions:
                 log_info(f"✅ 触发条件评估通过: 价格稳定性{price_stability:.4f} ≤ 突破阈值{breakout_threshold}")
+            else:
+                log_info(f"❌ 触发条件评估未通过: 价格稳定性{price_stability:.4f} > 突破阈值{breakout_threshold}")
             
             return meets_conditions
         except Exception as e:

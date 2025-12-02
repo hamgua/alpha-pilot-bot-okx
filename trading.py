@@ -177,71 +177,452 @@ class OrderManager:
     
     def set_stop_loss_take_profit(self, position_side: str, stop_loss_price: float, 
                                  take_profit_price: float, position_size: float) -> bool:
-        """设置止盈止损"""
+        """智能止盈止损设置（先检查合理性，再决定是否更新）"""
         try:
-            # 取消现有订单
-            self.cancel_all_tp_sl_orders()
+            # 参数验证
+            if position_size <= 0:
+                log_error(f"❌ 止盈止损设置失败: 持仓数量无效 ({position_size})")
+                return False
+                
+            if position_side not in ['long', 'short']:
+                log_error(f"❌ 止盈止损设置失败: 持仓方向无效 ({position_side})")
+                return False
             
+            # 获取当前价格用于合理性判断
+            current_price = self._get_current_price()
+            if current_price <= 0:
+                log_error(f"❌ 无法获取当前价格，止盈止损设置失败")
+                return False
+            
+            log_info(f"📊 当前价格: ${current_price:.2f}, 持仓方向: {position_side}, 持仓数量: {position_size}")
+            
+            # 计算合理的价格范围
+            reasonable_sl, reasonable_tp = self._calculate_reasonable_prices(
+                position_side, current_price, stop_loss_price, take_profit_price
+            )
+            
+            # 1. 获取现有止盈止损订单
+            existing_orders = self._get_existing_tp_sl_orders()
+            
+            if existing_orders:
+                log_info("📊 当前止盈止损订单状态:")
+                existing_sl = None
+                existing_tp = None
+                
+                for order in existing_orders:
+                    side = order.get('side', '')
+                    trigger_px = float(order.get('triggerPx', 0))
+                    
+                    if side == 'sell' and position_side == 'long':  # 多头止损
+                        existing_sl = trigger_px
+                        log_info(f"   - 止损: ${trigger_px:.2f}")
+                    elif side == 'buy' and position_side == 'short':  # 空头止损
+                        existing_sl = trigger_px
+                        log_info(f"   - 止损: ${trigger_px:.2f}")
+                    elif side == 'sell' and position_side == 'long' and trigger_px > current_price:  # 多头止盈
+                        existing_tp = trigger_px
+                        log_info(f"   - 止盈: ${trigger_px:.2f}")
+                    elif side == 'buy' and position_side == 'short' and trigger_px < current_price:  # 空头止盈
+                        existing_tp = trigger_px
+                        log_info(f"   - 止盈: ${trigger_px:.2f}")
+                
+                # 判断现有订单是否合理（基于波动率的动态容差）
+                volatility = self._get_market_volatility()
+                tolerance_pct = max(0.01, min(0.05, volatility / 100))  # 1%-5%的动态容差
+                
+                is_reasonable = True
+                log_info(f"📏 使用动态容差: {tolerance_pct:.1%} (波动率: {volatility:.1f}%)")
+                
+                if existing_sl is not None:
+                    sl_diff = abs(existing_sl - reasonable_sl) / reasonable_sl
+                    is_reasonable = is_reasonable and sl_diff < tolerance_pct
+                    log_info(f"   📊 止损合理性: ${existing_sl:.2f} vs ${reasonable_sl:.2f} (差异: {sl_diff:.1%})")
+                
+                if existing_tp is not None:
+                    tp_diff = abs(existing_tp - reasonable_tp) / reasonable_tp
+                    is_reasonable = is_reasonable and tp_diff < tolerance_pct
+                    log_info(f"   📊 止盈合理性: ${existing_tp:.2f} vs ${reasonable_tp:.2f} (差异: {tp_diff:.1%})")
+                
+                log_info(f"   ✅ 合理性判断: {'合理' if is_reasonable else '不合理'}")
+                
+                if is_reasonable:
+                    log_info("✅ 当前止盈止损设置合理，无需调整")
+                    return True
+                else:
+                    log_info("⚠️ 当前止盈止损设置不合理，将重新设置")
+            
+            # 2. 取消现有止盈止损订单（如果不合理或不存在）
+            if existing_orders:
+                cancelled_count = self.cancel_all_tp_sl_orders()
+                if cancelled_count > 0:
+                    log_info(f"✅ 已取消 {cancelled_count} 个现有止盈止损订单")
+            
+            # 3. 设置新的止盈止损订单
             close_side = 'sell' if position_side == 'long' else 'buy'
             
+            success_count = 0
+            
             # 设置止损
-            if stop_loss_price:
+            if reasonable_sl > 0:
                 sl_params = {
                     'instId': self.inst_id,
                     'tdMode': 'cross',
                     'side': close_side,
                     'ordType': 'trigger',
                     'sz': str(position_size),
-                    'triggerPx': str(stop_loss_price),
+                    'triggerPx': str(reasonable_sl),
                     'orderPx': '-1',
-                    'triggerPxType': 'last',
-                    'tag': 'alpha_sl'
+                    'triggerPxType': 'last'
                 }
                 
+                log_info(f"🎯 设置止损参数: {sl_params}")
                 sl_resp = self.exchange.private_post_trade_order_algo(sl_params)
-                if sl_resp.get('code') == '0':
-                    log_info(f"✅ 止损设置成功: ${stop_loss_price}")
+                
+                if sl_resp and sl_resp.get('code') == '0':
+                    algo_id = sl_resp['data'][0]['algoId'] if sl_resp.get('data') and len(sl_resp.get('data', [])) > 0 else 'unknown'
+                    log_info(f"✅ 止损设置成功: trigger=${reasonable_sl}, algoId={algo_id}")
+                    success_count += 1
                 else:
-                    log_error(f"❌ 止损设置失败: {sl_resp}")
+                    error_msg = sl_resp.get('msg', '未知错误') if sl_resp else 'API无响应'
+                    log_error(f"❌ 止损设置失败: {error_msg}")
             
             # 设置止盈
-            if take_profit_price:
+            if reasonable_tp > 0:
                 tp_params = {
                     'instId': self.inst_id,
                     'tdMode': 'cross',
                     'side': close_side,
                     'ordType': 'trigger',
                     'sz': str(position_size),
-                    'triggerPx': str(take_profit_price),
+                    'triggerPx': str(reasonable_tp),
                     'orderPx': '-1',
-                    'triggerPxType': 'last',
-                    'tag': 'alpha_tp'
+                    'triggerPxType': 'last'
                 }
                 
+                log_info(f"🎯 设置止盈参数: {tp_params}")
                 tp_resp = self.exchange.private_post_trade_order_algo(tp_params)
-                if tp_resp.get('code') == '0':
-                    log_info(f"✅ 止盈设置成功: ${take_profit_price}")
+                
+                if tp_resp and tp_resp.get('code') == '0':
+                    algo_id = tp_resp['data'][0]['algoId'] if tp_resp.get('data') and len(tp_resp.get('data', [])) > 0 else 'unknown'
+                    log_info(f"✅ 止盈设置成功: trigger=${reasonable_tp}, algoId={algo_id}")
+                    success_count += 1
                 else:
-                    log_error(f"❌ 止盈设置失败: {tp_resp}")
+                    error_msg = tp_resp.get('msg', '未知错误') if tp_resp else 'API无响应'
+                    log_error(f"❌ 止盈设置失败: {error_msg}")
             
-            return True
+            result = success_count > 0
+            log_info(f"📊 止盈止损设置结果: {'成功' if result else '失败'} (成功设置{success_count}个订单)")
+            return result
             
         except Exception as e:
-            log_error(f"止盈止损设置异常: {e}")
+            log_error(f"❌ 止盈止损设置异常: {e}")
+            import traceback
+            log_error(f"详细错误: {traceback.format_exc()}")
             return False
-    
-    def cancel_all_tp_sl_orders(self) -> bool:
-        """取消所有止盈止损订单"""
+
+    def _calculate_reasonable_prices(self, position_side: str, current_price: float, 
+                                   stop_loss_price: float, take_profit_price: float) -> Tuple[float, float]:
+        """基于原项目逻辑计算动态合理的止损止盈价格"""
         try:
-            # 获取待处理订单
-            pending_orders = self.exchange.fetch_open_orders(self.symbol)
+            # 获取市场波动率用于动态调整
+            volatility = self._get_market_volatility()
             
-            for order in pending_orders:
-                if any(tag in str(order.get('tag', '')) for tag in ['alpha_sl', 'alpha_tp']):
-                    self.exchange.cancel_order(order['id'], self.symbol)
+            # 基于波动率的动态区间计算
+            base_sl_pct = 0.02  # 基础2%止损
+            base_tp_pct = 0.06  # 基础6%止盈
+            
+            # 根据波动率调整区间
+            volatility_multiplier = max(0.5, min(2.0, volatility / 2.0))
+            
+            # 动态计算合理区间
+            if position_side == 'long':
+                # 多头：止损低于当前价，止盈高于当前价
+                min_sl = current_price * (1 - base_sl_pct * volatility_multiplier)
+                max_sl = current_price * (1 - base_sl_pct * 0.5 * volatility_multiplier)
+                min_tp = current_price * (1 + base_tp_pct * 0.8 * volatility_multiplier)
+                max_tp = current_price * (1 + base_tp_pct * 1.2 * volatility_multiplier)
+                
+                # 确保止损在当前价下方
+                if stop_loss_price >= current_price or stop_loss_price < min_sl:
+                    stop_loss_price = max(min_sl, current_price * 0.985)
+                    log_info(f"📉 多头动态止损调整: ${stop_loss_price:.2f} (波动率: {volatility:.1f}%)")
+                elif stop_loss_price > max_sl:
+                    stop_loss_price = max_sl
+                    log_info(f"📉 多头止损优化: ${stop_loss_price:.2f}")
+                
+                # 确保止盈在当前价上方
+                if take_profit_price <= current_price or take_profit_price > max_tp:
+                    take_profit_price = min(max_tp, current_price * 1.08)
+                    log_info(f"📈 多头动态止盈调整: ${take_profit_price:.2f}")
+                elif take_profit_price < min_tp:
+                    take_profit_price = min_tp
+                    log_info(f"📈 多头止盈优化: ${take_profit_price:.2f}")
                     
+            else:  # short
+                # 空头：止损高于当前价，止盈低于当前价
+                min_sl = current_price * (1 + base_sl_pct * 0.5 * volatility_multiplier)
+                max_sl = current_price * (1 + base_sl_pct * volatility_multiplier)
+                min_tp = current_price * (1 - base_tp_pct * 1.2 * volatility_multiplier)
+                max_tp = current_price * (1 - base_tp_pct * 0.8 * volatility_multiplier)
+                
+                # 确保止损在当前价上方
+                if stop_loss_price <= current_price or stop_loss_price > max_sl:
+                    stop_loss_price = min(max_sl, current_price * 1.015)
+                    log_info(f"📈 空头动态止损调整: ${stop_loss_price:.2f} (波动率: {volatility:.1f}%)")
+                elif stop_loss_price < min_sl:
+                    stop_loss_price = min_sl
+                    log_info(f"📈 空头止损优化: ${stop_loss_price:.2f}")
+                
+                # 确保止盈在当前价下方
+                if take_profit_price >= current_price or take_profit_price < min_tp:
+                    take_profit_price = max(min_tp, current_price * 0.92)
+                    log_info(f"📉 空头动态止盈调整: ${take_profit_price:.2f}")
+                elif take_profit_price > max_tp:
+                    take_profit_price = max_tp
+                    log_info(f"📉 空头止盈优化: ${take_profit_price:.2f}")
+            
+            return round(float(stop_loss_price), 2), round(float(take_profit_price), 2)
+            
         except Exception as e:
-            log_error(f"取消止盈止损订单失败: {e}")
+            log_error(f"动态价格计算异常: {e}")
+            # 回退到固定比例
+            if position_side == 'long':
+                return round(current_price * 0.98, 2), round(current_price * 1.06, 2)
+            else:
+                return round(current_price * 1.02, 2), round(current_price * 0.94, 2)
+
+    def _get_market_volatility(self) -> float:
+        """获取当前市场波动率"""
+        try:
+            # 简化实现 - 使用ATR或价格变化率
+            ticker = self.exchange.fetch_ticker(self.symbol)
+            high = float(ticker.get('high', 0))
+            low = float(ticker.get('low', 0))
+            last = float(ticker.get('last', 0))
+            
+            if high > 0 and low > 0 and last > 0:
+                daily_range = abs(high - low) / last * 100
+                return max(0.5, min(5.0, daily_range))
+            return 2.0  # 默认波动率
+        except:
+            return 2.0
+    
+    def _get_existing_tp_sl_orders(self) -> List[Dict[str, Any]]:
+        """获取现有止盈止损订单 - 完全复制原项目逻辑"""
+        try:
+            # 转换交易对格式：BTC/USDT:USDT -> BTC-USDT-SWAP
+            inst_id = self.symbol.replace('/USDT:USDT', '-USDT-SWAP').replace('/', '-')
+
+            # 获取当前持仓方向
+            current_position = self.get_current_position()
+            if not current_position or current_position['size'] <= 0:
+                return []
+
+            position_side = current_position['side']
+            current_price = None
+            try:
+                ticker = self.exchange.fetch_ticker(self.symbol)
+                current_price = float(ticker['last'])
+            except:
+                current_price = 0
+
+            # 使用OKX专用的算法订单API查询所有触发订单
+            response = self.exchange.private_get_trade_orders_algo_pending({
+                'instType': 'SWAP',
+                'instId': inst_id,
+                'ordType': 'trigger'
+            })
+            
+            if not response or response.get('code') != '0' or not response.get('data'):
+                log_info(f"ℹ️ 无可取消算法订单或查询异常: {response}")
+                return []
+
+            tp_sl_orders = []
+            for order in response['data']:
+                ord_type = order.get('ordType')
+                if ord_type in ['trigger', 'oco']:
+                    algo_id = order.get('algoId')
+                    if algo_id:
+                        standardized_order = {
+                            'id': algo_id,
+                            'type': ord_type,
+                            'side': order.get('side', ''),
+                            'position_side': position_side,
+                            'triggerPx': float(order.get('triggerPx', 0)),
+                            'sz': float(order.get('sz', 0)),
+                            'status': order.get('state', 'live'),
+                            'source': 'algo'
+                        }
+                        tp_sl_orders.append(standardized_order)
+
+            log_info(f"🔍 查询到 {len(tp_sl_orders)} 个止盈止损订单")
+            return tp_sl_orders
+            
+        except Exception as e:
+            log_error(f"获取现有止盈止损订单异常: {e}")
+            return []
+
+    def get_current_position(self):
+        """获取当前持仓情况 - 完全复制原项目逻辑"""
+        try:
+            positions = self.exchange.fetch_positions([self.symbol])
+
+            for pos in positions:
+                if pos['symbol'] == self.symbol:
+                    contracts = float(pos['contracts']) if pos['contracts'] else 0
+
+                    if contracts > 0:
+                        return {
+                            'side': pos['side'],  # 'long' or 'short'
+                            'size': contracts,
+                            'entry_price': float(pos['entryPrice']) if pos['entryPrice'] else 0,
+                            'unrealized_pnl': float(pos['unrealizedPnl']) if pos['unrealizedPnl'] else 0,
+                            'leverage': float(pos['leverage']) if pos['leverage'] else 10,
+                            'symbol': pos['symbol']
+                        }
+
+            return None
+
+        except Exception as e:
+            log_info(f"获取持仓失败: {e}")
+            return None
+
+    def _get_current_price(self) -> float:
+        """获取当前价格"""
+        try:
+            ticker = self.exchange.fetch_ticker(self.symbol)
+            return float(ticker.get('last', 0))
+        except Exception as e:
+            log_warning(f"获取当前价格失败: {e}")
+            return 0.0
+
+    def cancel_all_tp_sl_orders(self) -> int:
+        """取消所有止盈止损订单 - 完全复制原项目逻辑"""
+        try:
+            # 转换交易对格式：例如 "BTC/USDT:USDT" -> "BTC-USDT-SWAP"
+            inst_id = self.symbol.replace('/USDT:USDT', '-USDT-SWAP').replace('/', '-')
+
+            # 查询活跃算法订单（止盈止损）
+            response = self.exchange.private_get_trade_orders_algo_pending({
+                'instType': 'SWAP',
+                'instId': inst_id,
+                'ordType': 'trigger'
+            })
+
+            if not response or response.get('code') != '0' or not response.get('data'):
+                log_info(f"ℹ️ 无可取消算法订单或查询异常: {response}")
+                return 0
+
+            cancel_params = []
+            for order in response['data']:
+                ord_type = order.get('ordType')
+                if ord_type in ['trigger', 'oco']:
+                    algo_id = order.get('algoId')
+                    if algo_id:
+                        cancel_params.append({
+                            "instId": inst_id,
+                            "algoId": str(algo_id)
+                        })
+                    else:
+                        log_warning(f"⚠️ 发现算法订单但缺少 algoId: {order}")
+
+            if cancel_params:
+                log_info(f"➡️ 准备取消算法订单: {json.dumps(cancel_params, ensure_ascii=False)}")
+                cancel_response = self.exchange.request(
+                    path="trade/cancel-algos",
+                    api="private",
+                    method="POST",
+                    params=cancel_params
+                )
+                log_info(f"⬅️ 返回: {cancel_response}")
+
+                if cancel_response.get('code') == '0':
+                    log_info(f"✅ 成功发送取消请求，共 {len(cancel_params)} 个")
+                    return len(cancel_params)
+                else:
+                    log_warning(f"⚠️ 取消算法订单失败: {cancel_response}")
+            else:
+                log_info("ℹ️ 没有符合条件的止盈止损算法订单需要取消")
+                
+            return 0
+
+        except Exception as e:
+            log_error(f"取消止盈止损订单异常: {e}")
+            return 0
+
+    def cancel_all_orders_comprehensive(self) -> Dict[str, int]:
+        """全面取消所有类型的订单，返回详细统计"""
+        result = {'algorithmic': 0, 'regular': 0, 'total': 0, 'errors': 0}
+        
+        try:
+            log_info("🔄 开始全面取消所有订单...")
+            
+            # 1. 取消算法订单（止盈止损条件单）
+            try:
+                # 使用CCXT的标准方法获取算法订单
+                try:
+                    response = self.exchange.fetchOpenOrders(self.symbol, params={'algo': True})
+                    if isinstance(response, list):
+                        algo_data = response
+                    else:
+                        algo_data = []
+                except Exception as e:
+                    log_warning(f"获取算法订单失败: {e}")
+                    algo_data = []
+                
+                log_info(f"🔍 算法订单: 找到 {len(algo_data)} 个")
+                
+                # 取消活跃的算法订单
+                success_count = 0
+                for algo_order in algo_data:
+                    try:
+                        algo_id = algo_order.get('algoId') or algo_order.get('id')
+                        state = algo_order.get('state', '') or algo_order.get('status', '')
+                        
+                        if algo_id and state in ['live', 'open', 'pending', 'partially_filled']:
+                            # 使用CCXT标准方法取消算法订单
+                            try:
+                                self.exchange.cancelOrder(algo_id, self.symbol)
+                                success_count += 1
+                                log_info(f"✅ 已取消算法订单: {algo_id}")
+                            except Exception as e:
+                                log_warning(f"取消算法订单失败: {algo_id}, 原因: {e}")
+                    except Exception as e:
+                        log_warning(f"处理算法订单失败: {e}")
+                
+                result['algorithmic'] = success_count
+                log_info(f"✅ 算法订单取消完成: 成功 {success_count} 个")
+                        
+            except Exception as e:
+                log_warning(f"算法订单取消异常: {e}")
+                result['errors'] += 1
+            
+            # 2. 取消普通开放订单
+            try:
+                open_orders = self.exchange.fetch_open_orders(self.symbol)
+                
+                for order in open_orders:
+                    try:
+                        if order.get('status') in ['open', 'pending']:
+                            self.exchange.cancel_order(order['id'], self.symbol)
+                            result['regular'] += 1
+                            log_info(f"✅ 已取消普通订单: {order['id']}")
+                    except Exception as e:
+                        log_warning(f"取消普通订单失败 {order.get('id')}: {e}")
+                        result['errors'] += 1
+                        
+            except Exception as e:
+                log_warning(f"普通订单取消异常: {e}")
+                result['errors'] += 1
+            
+            result['total'] = result['algorithmic'] + result['regular']
+            log_info(f"📊 订单取消完成: 算法订单={result['algorithmic']}, 普通订单={result['regular']}, 总计={result['total']}, 错误={result['errors']}")
+            
+        except Exception as e:
+            log_error(f"全面取消订单异常: {e}")
+            result['errors'] += 1
+            
+        return result
 
 class ShortSellingManager:
     """做空管理器"""
@@ -447,6 +828,9 @@ class TradingEngine:
             position = self.exchange_manager.get_position()
             balance = self.exchange_manager.get_balance()
             
+            # 获取历史K线数据用于价格变化计算
+            price_history = self.get_price_history()
+            
             return {
                 'price': ticker.get('last', 0),
                 'bid': ticker.get('bid', 0),
@@ -455,12 +839,40 @@ class TradingEngine:
                 'low': ticker.get('low', 0),
                 'volume': ticker.get('volume', 0),
                 'position': position,
-                'balance': balance
+                'balance': balance,
+                'price_history': price_history
             }
             
         except Exception as e:
             log_error(f"获取市场数据失败: {e}")
             return {}
+    
+    def get_price_history(self, timeframe: str = '15m', limit: int = 10) -> List[Dict[str, float]]:
+        """获取历史K线数据"""
+        try:
+            ohlcv = self.exchange_manager.exchange.fetch_ohlcv(
+                self.exchange_manager.symbol,
+                timeframe,
+                limit=limit
+            )
+            
+            # 转换为标准格式
+            history = []
+            for candle in ohlcv:
+                history.append({
+                    'timestamp': candle[0],
+                    'open': float(candle[1]),
+                    'high': float(candle[2]),
+                    'low': float(candle[3]),
+                    'close': float(candle[4]),
+                    'volume': float(candle[5])
+                })
+            
+            return history
+            
+        except Exception as e:
+            log_error(f"获取历史K线数据失败: {e}")
+            return []
     
     def execute_trade(self, signal: str, amount: float, price: Optional[float] = None) -> bool:
         """执行交易"""
@@ -575,6 +987,34 @@ class TradingEngine:
             position['size']
         )
     
+    def close_position(self, side: str, amount: float) -> bool:
+        """平仓操作
+        
+        Args:
+            side: 持仓方向 ('long' 或 'short')
+            amount: 平仓数量
+            
+        Returns:
+            bool: 平仓是否成功
+        """
+        try:
+            close_side = 'sell' if side == 'long' else 'buy'
+            log_info(f"🔄 执行平仓: {side} 方向，数量: {amount:.4f} 张")
+            
+            # 使用市价单平仓，设置reduce_only=True
+            success = self.order_manager.place_market_order(close_side, amount, reduce_only=True)
+            
+            if success:
+                log_info(f"✅ 平仓成功: {side} 方向 {amount:.4f} 张")
+            else:
+                log_error(f"❌ 平仓失败: {side} 方向 {amount:.4f} 张")
+            
+            return success
+            
+        except Exception as e:
+            log_error(f"平仓异常: {e}")
+            return False
+
     def get_position_info(self) -> Dict[str, Any]:
         """获取持仓信息"""
         position = self.exchange_manager.get_position()

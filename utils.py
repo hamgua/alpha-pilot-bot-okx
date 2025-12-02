@@ -20,6 +20,11 @@ class CacheItem:
     data: Any
     timestamp: float
     duration: int
+    expires_at: float = None
+    
+    def __post_init__(self):
+        if self.expires_at is None:
+            self.expires_at = self.timestamp + self.duration
 
 class CacheManager:
     """缓存管理器"""
@@ -66,6 +71,21 @@ class CacheManager:
                 'size': len(self._cache),
                 'max_size': self._max_size
             }
+    
+    def cleanup_expired(self) -> int:
+        """清理过期的缓存项"""
+        current_time = time.time()
+        expired_keys = []
+        
+        with self._lock:
+            for key, item in self._cache.items():
+                if item.expires_at <= current_time:
+                    expired_keys.append(key)
+            
+            for key in expired_keys:
+                del self._cache[key]
+        
+        return len(expired_keys)
 
 class MemoryManager:
     """内存管理器"""
