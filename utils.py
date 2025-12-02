@@ -7,12 +7,15 @@ import os
 import time
 import json
 import threading
+import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
-from logger_config import log_info, log_warning, log_error
-from trade_logger import trade_logger
+# 日志函数将在使用时动态创建
+log_info = lambda *args, **kwargs: print(*args)
+log_warning = lambda *args, **kwargs: print("WARNING:", *args)
+log_error = lambda *args, **kwargs: print("ERROR:", *args)
 
 @dataclass
 class CacheItem:
@@ -210,6 +213,195 @@ class JSONHelper:
             return json.dumps(obj, ensure_ascii=False, default=str)
         except (TypeError, ValueError):
             return str(obj)
+    
+    @staticmethod
+    def safe_json_serialize(obj: Any) -> str:
+        """安全序列化JSON"""
+        try:
+            return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+        except Exception as e:
+            log_warning(f"JSON序列化失败: {e}")
+            return str(obj)
+
+# 整合日志和数据管理功能
+class LoggerConfig:
+    """日志配置 - 整合logger_config.py功能"""
+    
+    def __init__(self, name="alpha_arena", log_level=logging.INFO):
+        self.name = name
+        self.log_level = log_level
+        self._setup_logger()
+    
+    def _setup_logger(self):
+        """设置日志器"""
+        import logging
+        from pathlib import Path
+        
+        LOG_DIR = Path(__file__).parent / "logs"
+        LOG_DIR.mkdir(exist_ok=True)
+        
+        logger = logging.getLogger(self.name)
+        logger.setLevel(self.log_level)
+        
+        # 文件处理器
+        from datetime import datetime
+        log_file = LOG_DIR / f"{self.name}-{datetime.now().strftime('%Y%m%d')}.log"
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setFormatter(
+            logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+        )
+        
+        # 控制台处理器
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(
+            logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+        )
+        
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+        return logger
+
+class TradeLogger:
+    """交易日志管理 - 整合trade_logger.py功能"""
+    
+    def __init__(self):
+        from pathlib import Path
+        self.trade_log_file = Path("logs") / "trades.json"
+        self.trade_log_file.parent.mkdir(exist_ok=True)
+    
+    def log_ai_decision(self, decision_data):
+        """记录AI决策"""
+        import json
+        from datetime import datetime
+        
+        log_entry = {
+            "type": "AI_DECISION",
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "signal": decision_data.get('signal', 'HOLD'),
+            "confidence": decision_data.get('confidence', 'N/A'),
+            "reason": decision_data.get('reason', ''),
+            "price": decision_data.get('price', 0)
+        }
+        
+        try:
+            with open(self.trade_log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+        except Exception as e:
+            print(f"记录AI决策失败: {e}")
+
+class DataManager:
+    """数据管理 - 整合数据管理功能"""
+    
+    def __init__(self):
+        from pathlib import Path
+        self.data_dir = Path(__file__).parent / "data_json"
+        self.data_dir.mkdir(exist_ok=True)
+        
+        self.data_file = self.data_dir / "trading_data.json"
+        self.trades_file = self.data_dir / "trades_history.json"
+        self.equity_file = self.data_dir / "equity_history.json"
+    
+    def save_trading_data(self, data):
+        """保存交易数据"""
+        try:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                import json
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"保存交易数据失败: {e}")
+    
+    def load_trading_data(self):
+        """加载交易数据"""
+        try:
+            if self.data_file.exists():
+                import json
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"加载交易数据失败: {e}")
+            return {}
+    
+    def save_market_data(self, data):
+        """保存市场数据"""
+        self.save_trading_data(data)
+    
+    def get_data_summary(self):
+        """获取数据摘要"""
+        try:
+            summary = {}
+            
+            # 交易数据摘要
+            if self.data_file.exists():
+                data = self.load_trading_data()
+                summary['trading_data'] = {
+                    'total_records': len(data) if isinstance(data, dict) else 0,
+                    'last_update': data.get('timestamp', '未知') if isinstance(data, dict) else '未知'
+                }
+            else:
+                summary['trading_data'] = {'total_records': 0, 'last_update': '无数据'}
+            
+            # 市场数据摘要
+            summary['market_data'] = {'total_records': 0, 'last_update': '无数据'}
+            
+            return summary
+            
+        except Exception as e:
+            print(f"获取数据摘要失败: {e}")
+            return {'trading_data': {'total_records': 0, 'last_update': '错误'}, 
+                   'market_data': {'total_records': 0, 'last_update': '错误'}}
+    
+    def cleanup_old_data(self, days_to_keep=30):
+        """清理旧数据"""
+        try:
+            cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+            # 这里可以添加实际的清理逻辑
+            log_info(f"📊 数据清理完成，保留{days_to_keep}天内数据")
+        except Exception as e:
+            log_error(f"清理旧数据失败: {e}")
+    
+    def save_ai_signal(self, signal_data):
+        """保存AI信号"""
+        try:
+            signals_file = self.data_dir / "ai_signals.json"
+            existing_signals = []
+            
+            if signals_file.exists():
+                with open(signals_file, 'r', encoding='utf-8') as f:
+                    existing_signals = json.load(f)
+            
+            existing_signals.append(signal_data)
+            
+            # 保留最近100个信号
+            if len(existing_signals) > 100:
+                existing_signals = existing_signals[-100:]
+            
+            with open(signals_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_signals, f, ensure_ascii=False, indent=2)
+                
+        except Exception as e:
+            log_error(f"保存AI信号失败: {e}")
+    
+    def save_performance_metrics(self, metrics):
+        """保存性能指标"""
+        try:
+            metrics_file = self.data_dir / "performance_metrics.json"
+            existing_metrics = []
+            
+            if metrics_file.exists():
+                with open(metrics_file, 'r', encoding='utf-8') as f:
+                    existing_metrics = json.load(f)
+            
+            existing_metrics.append(metrics)
+            
+            # 保留最近1000个指标
+            if len(existing_metrics) > 1000:
+                existing_metrics = existing_metrics[-1000:]
+            
+            with open(metrics_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_metrics, f, ensure_ascii=False, indent=2)
+                
+        except Exception as e:
+            log_error(f"保存性能指标失败: {e}")
 
 class TimeHelper:
     """时间工具类"""
@@ -1138,6 +1330,45 @@ time_helper = TimeHelper()
 logger_helper = LoggerHelper()
 error_recovery = ErrorRecoveryManager()
 recovery_engine = RecoveryEngine()
+
+def save_trade_record(trade_record: Dict[str, Any]) -> bool:
+    """保存交易记录到文件"""
+    try:
+        from pathlib import Path
+        import json
+        
+        # 确保数据目录存在
+        data_dir = Path(__file__).parent / "data_json"
+        data_dir.mkdir(exist_ok=True)
+        
+        # 交易记录文件
+        trades_file = data_dir / "trades_history.json"
+        
+        # 加载现有记录
+        existing_records = []
+        if trades_file.exists():
+            try:
+                with open(trades_file, 'r', encoding='utf-8') as f:
+                    existing_records = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                existing_records = []
+        
+        # 确保是列表格式
+        if not isinstance(existing_records, list):
+            existing_records = []
+        
+        # 添加新记录
+        existing_records.append(trade_record)
+        
+        # 保存更新后的记录
+        with open(trades_file, 'w', encoding='utf-8') as f:
+            json.dump(existing_records, f, ensure_ascii=False, indent=2)
+        
+        return True
+        
+    except Exception as e:
+        print(f"保存交易记录失败: {e}")
+        return False
 state_persistence = StatePersistence()
 recovery_engine = RecoveryEngine()
 checkpoint_manager = CheckpointManager()

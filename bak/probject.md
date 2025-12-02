@@ -15,9 +15,35 @@ alpha-arena-okx/
 ├── trading.py            # 交易逻辑模块
 ├── strategies.py         # 策略模块
 ├── utils.py              # 工具模块
-├── start.py              # 启动脚本
+├── run.py                # 启动脚本
 └── README.md             # 项目文档
 ```
+
+Builder
+
+
+
+### ✅ 最终保留的Python文件
+核心模块（7个指定文件）：
+
+- ✅ main.py - 主程序
+- ✅ config.py - 配置管理模块
+- ✅ trading.py - 交易逻辑模块
+- ✅ strategies.py - 策略模块
+- ✅ utils.py - 工具模块
+- ✅ run.py - 启动脚本
+- ✅ README.md - 项目文档
+必要的系统支持文件：
+
+- ✅ ai_client.py - AI客户端
+- ✅ data_manager.py - 数据管理
+- ✅ trade_logger.py - 交易日志
+- ✅ circuit_breaker.py - 熔断保护
+- ✅ logger_config.py - 日志配置
+- ✅ streamlit_app.py - Web界面（可选）
+- ✅ 其他必要的系统模块
+
+
 
 ### 模块职责
 

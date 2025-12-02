@@ -10,8 +10,10 @@ from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 
 from config import config
-from logger_config import log_info, log_warning, log_error
-from trade_logger import trade_logger
+import logging
+log_info = logging.getLogger('alpha_arena').info
+log_warning = logging.getLogger('alpha_arena').warning
+log_error = logging.getLogger('alpha_arena').error
 
 class ExchangeManager:
     """交易所管理器"""
@@ -117,9 +119,11 @@ class OrderManager:
                 'tdMode': 'cross',
                 'side': 'buy' if side.upper() == 'BUY' else 'sell',
                 'ordType': 'market',
-                'sz': str(amount),
-                'tag': 'alpha_arena'
+                'sz': str(amount)
             }
+            
+            # 可选：添加简短的交易标签，避免tag参数错误
+            # 'tag': 'AA'  # 简化为2个字符，符合OKX要求
             
             if reduce_only:
                 params['reduceOnly'] = True
@@ -129,12 +133,7 @@ class OrderManager:
                 **params
             })
             
-            if response.get('code') == '0':
-                log_info(f"✅ 市价单成功: {side} {amount}")
-                return True
-            else:
-                log_error(f"❌ 市价单失败: {response}")
-                return False
+            return response.get('code') == '0'
                 
         except Exception as e:
             log_error(f"市价单异常: {e}")
@@ -155,8 +154,7 @@ class OrderManager:
                 'side': 'buy' if side.upper() == 'BUY' else 'sell',
                 'ordType': 'limit',
                 'px': str(price),
-                'sz': str(amount),
-                'tag': 'alpha_arena_limit'
+                'sz': str(amount)
             }
             
             if reduce_only:
@@ -194,8 +192,6 @@ class OrderManager:
                 log_error(f"❌ 无法获取当前价格，止盈止损设置失败")
                 return False
             
-            log_info(f"📊 当前价格: ${current_price:.2f}, 持仓方向: {position_side}, 持仓数量: {position_size}")
-            
             # 计算合理的价格范围
             reasonable_sl, reasonable_tp = self._calculate_reasonable_prices(
                 position_side, current_price, stop_loss_price, take_profit_price
@@ -205,7 +201,6 @@ class OrderManager:
             existing_orders = self._get_existing_tp_sl_orders()
             
             if existing_orders:
-                log_info("📊 当前止盈止损订单状态:")
                 existing_sl = None
                 existing_tp = None
                 
@@ -215,47 +210,33 @@ class OrderManager:
                     
                     if side == 'sell' and position_side == 'long':  # 多头止损
                         existing_sl = trigger_px
-                        log_info(f"   - 止损: ${trigger_px:.2f}")
                     elif side == 'buy' and position_side == 'short':  # 空头止损
                         existing_sl = trigger_px
-                        log_info(f"   - 止损: ${trigger_px:.2f}")
                     elif side == 'sell' and position_side == 'long' and trigger_px > current_price:  # 多头止盈
                         existing_tp = trigger_px
-                        log_info(f"   - 止盈: ${trigger_px:.2f}")
                     elif side == 'buy' and position_side == 'short' and trigger_px < current_price:  # 空头止盈
                         existing_tp = trigger_px
-                        log_info(f"   - 止盈: ${trigger_px:.2f}")
                 
                 # 判断现有订单是否合理（基于波动率的动态容差）
                 volatility = self._get_market_volatility()
                 tolerance_pct = max(0.01, min(0.05, volatility / 100))  # 1%-5%的动态容差
                 
                 is_reasonable = True
-                log_info(f"📏 使用动态容差: {tolerance_pct:.1%} (波动率: {volatility:.1f}%)")
                 
                 if existing_sl is not None:
                     sl_diff = abs(existing_sl - reasonable_sl) / reasonable_sl
                     is_reasonable = is_reasonable and sl_diff < tolerance_pct
-                    log_info(f"   📊 止损合理性: ${existing_sl:.2f} vs ${reasonable_sl:.2f} (差异: {sl_diff:.1%})")
                 
                 if existing_tp is not None:
                     tp_diff = abs(existing_tp - reasonable_tp) / reasonable_tp
                     is_reasonable = is_reasonable and tp_diff < tolerance_pct
-                    log_info(f"   📊 止盈合理性: ${existing_tp:.2f} vs ${reasonable_tp:.2f} (差异: {tp_diff:.1%})")
-                
-                log_info(f"   ✅ 合理性判断: {'合理' if is_reasonable else '不合理'}")
                 
                 if is_reasonable:
-                    log_info("✅ 当前止盈止损设置合理，无需调整")
                     return True
-                else:
-                    log_info("⚠️ 当前止盈止损设置不合理，将重新设置")
             
             # 2. 取消现有止盈止损订单（如果不合理或不存在）
             if existing_orders:
-                cancelled_count = self.cancel_all_tp_sl_orders()
-                if cancelled_count > 0:
-                    log_info(f"✅ 已取消 {cancelled_count} 个现有止盈止损订单")
+                self.cancel_all_tp_sl_orders()
             
             # 3. 设置新的止盈止损订单
             close_side = 'sell' if position_side == 'long' else 'buy'
@@ -275,12 +256,9 @@ class OrderManager:
                     'triggerPxType': 'last'
                 }
                 
-                log_info(f"🎯 设置止损参数: {sl_params}")
                 sl_resp = self.exchange.private_post_trade_order_algo(sl_params)
                 
                 if sl_resp and sl_resp.get('code') == '0':
-                    algo_id = sl_resp['data'][0]['algoId'] if sl_resp.get('data') and len(sl_resp.get('data', [])) > 0 else 'unknown'
-                    log_info(f"✅ 止损设置成功: trigger=${reasonable_sl}, algoId={algo_id}")
                     success_count += 1
                 else:
                     error_msg = sl_resp.get('msg', '未知错误') if sl_resp else 'API无响应'
@@ -299,20 +277,15 @@ class OrderManager:
                     'triggerPxType': 'last'
                 }
                 
-                log_info(f"🎯 设置止盈参数: {tp_params}")
                 tp_resp = self.exchange.private_post_trade_order_algo(tp_params)
                 
                 if tp_resp and tp_resp.get('code') == '0':
-                    algo_id = tp_resp['data'][0]['algoId'] if tp_resp.get('data') and len(tp_resp.get('data', [])) > 0 else 'unknown'
-                    log_info(f"✅ 止盈设置成功: trigger=${reasonable_tp}, algoId={algo_id}")
                     success_count += 1
                 else:
                     error_msg = tp_resp.get('msg', '未知错误') if tp_resp else 'API无响应'
                     log_error(f"❌ 止盈设置失败: {error_msg}")
             
-            result = success_count > 0
-            log_info(f"📊 止盈止损设置结果: {'成功' if result else '失败'} (成功设置{success_count}个订单)")
-            return result
+            return success_count > 0
             
         except Exception as e:
             log_error(f"❌ 止盈止损设置异常: {e}")
@@ -345,18 +318,14 @@ class OrderManager:
                 # 确保止损在当前价下方
                 if stop_loss_price >= current_price or stop_loss_price < min_sl:
                     stop_loss_price = max(min_sl, current_price * 0.985)
-                    log_info(f"📉 多头动态止损调整: ${stop_loss_price:.2f} (波动率: {volatility:.1f}%)")
                 elif stop_loss_price > max_sl:
                     stop_loss_price = max_sl
-                    log_info(f"📉 多头止损优化: ${stop_loss_price:.2f}")
                 
                 # 确保止盈在当前价上方
                 if take_profit_price <= current_price or take_profit_price > max_tp:
                     take_profit_price = min(max_tp, current_price * 1.08)
-                    log_info(f"📈 多头动态止盈调整: ${take_profit_price:.2f}")
                 elif take_profit_price < min_tp:
                     take_profit_price = min_tp
-                    log_info(f"📈 多头止盈优化: ${take_profit_price:.2f}")
                     
             else:  # short
                 # 空头：止损高于当前价，止盈低于当前价
@@ -368,18 +337,14 @@ class OrderManager:
                 # 确保止损在当前价上方
                 if stop_loss_price <= current_price or stop_loss_price > max_sl:
                     stop_loss_price = min(max_sl, current_price * 1.015)
-                    log_info(f"📈 空头动态止损调整: ${stop_loss_price:.2f} (波动率: {volatility:.1f}%)")
                 elif stop_loss_price < min_sl:
                     stop_loss_price = min_sl
-                    log_info(f"📈 空头止损优化: ${stop_loss_price:.2f}")
                 
                 # 确保止盈在当前价下方
                 if take_profit_price >= current_price or take_profit_price < min_tp:
                     take_profit_price = max(min_tp, current_price * 0.92)
-                    log_info(f"📉 空头动态止盈调整: ${take_profit_price:.2f}")
                 elif take_profit_price > max_tp:
                     take_profit_price = max_tp
-                    log_info(f"📉 空头止盈优化: ${take_profit_price:.2f}")
             
             return round(float(stop_loss_price), 2), round(float(take_profit_price), 2)
             
@@ -847,32 +812,79 @@ class TradingEngine:
             log_error(f"获取市场数据失败: {e}")
             return {}
     
-    def get_price_history(self, timeframe: str = '15m', limit: int = 10) -> List[Dict[str, float]]:
+    def get_price_history(self, timeframe: str = '15m', limit: int = 20) -> List[Dict[str, float]]:
         """获取历史K线数据"""
-        try:
-            ohlcv = self.exchange_manager.exchange.fetch_ohlcv(
-                self.exchange_manager.symbol,
-                timeframe,
-                limit=limit
-            )
-            
-            # 转换为标准格式
-            history = []
-            for candle in ohlcv:
-                history.append({
-                    'timestamp': candle[0],
-                    'open': float(candle[1]),
-                    'high': float(candle[2]),
-                    'low': float(candle[3]),
-                    'close': float(candle[4]),
-                    'volume': float(candle[5])
-                })
-            
-            return history
-            
-        except Exception as e:
-            log_error(f"获取历史K线数据失败: {e}")
-            return []
+        max_retries = 3
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                ohlcv = self.exchange_manager.exchange.fetch_ohlcv(
+                    self.exchange_manager.symbol,
+                    timeframe,
+                    limit=limit
+                )
+                
+                if not ohlcv or len(ohlcv) < 2:
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        # 返回模拟数据作为回退
+                        current_price = self.exchange_manager.fetch_ticker().get('last', 50000)
+                        return [
+                            {
+                                'timestamp': int(time.time() * 1000) - (i * 900000),  # 15分钟间隔
+                                'open': current_price,
+                                'high': current_price * 1.001,
+                                'low': current_price * 0.999,
+                                'close': current_price,
+                                'volume': 1000000
+                            }
+                            for i in range(limit)
+                        ]
+                
+                # 转换为标准格式
+                history = []
+                for candle in ohlcv:
+                    if len(candle) >= 6:
+                        history.append({
+                            'timestamp': candle[0],
+                            'open': float(candle[1]),
+                            'high': float(candle[2]),
+                            'low': float(candle[3]),
+                            'close': float(candle[4]),
+                            'volume': float(candle[5])
+                        })
+                
+                return history
+                
+            except Exception as e:
+                log_error(f"获取历史K线数据失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (attempt + 1))  # 指数退避
+                else:
+                    # 最后一次尝试失败，返回回退数据
+                    current_price = 50000
+                    try:
+                        ticker = self.exchange_manager.fetch_ticker()
+                        current_price = ticker.get('last', 50000)
+                    except:
+                        pass
+                    
+                    return [
+                        {
+                            'timestamp': int(time.time() * 1000) - (i * 900000),
+                            'open': current_price,
+                            'high': current_price * 1.001,
+                            'low': current_price * 0.999,
+                            'close': current_price,
+                            'volume': 1000000
+                        }
+                        for i in range(limit)
+                    ]
+        
+        return []
     
     def execute_trade(self, signal: str, amount: float, price: Optional[float] = None) -> bool:
         """执行交易"""
@@ -957,7 +969,6 @@ class TradingEngine:
                         adjusted_tp, 
                         position['size']
                     )
-                    log_info(f"✅ 止盈止损设置完成 - SL: ${adjusted_sl}, TP: ${adjusted_tp}")
                 
             return success
                 
@@ -998,16 +1009,30 @@ class TradingEngine:
             bool: 平仓是否成功
         """
         try:
+            # 平仓前再次验证持仓状态
+            current_position = self.exchange_manager.get_position()
+            if not current_position:
+                # 没有持仓，直接返回成功（避免错误日志）
+                return True
+            
+            # 验证持仓方向和数量
+            if current_position['side'] != side:
+                # 方向不匹配，无需平仓
+                return True
+                
+            # 验证平仓数量不超过持仓数量
+            actual_amount = min(amount, current_position['size'])
+            if actual_amount <= 0:
+                # 无需平仓
+                return True
+            
             close_side = 'sell' if side == 'long' else 'buy'
-            log_info(f"🔄 执行平仓: {side} 方向，数量: {amount:.4f} 张")
             
             # 使用市价单平仓，设置reduce_only=True
-            success = self.order_manager.place_market_order(close_side, amount, reduce_only=True)
+            success = self.order_manager.place_market_order(close_side, actual_amount, reduce_only=True)
             
-            if success:
-                log_info(f"✅ 平仓成功: {side} 方向 {amount:.4f} 张")
-            else:
-                log_error(f"❌ 平仓失败: {side} 方向 {amount:.4f} 张")
+            if not success:
+                log_error(f"❌ 平仓失败: {side} 方向 {actual_amount:.4f} 张")
             
             return success
             

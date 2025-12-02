@@ -11,22 +11,34 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
 # 导入模块
+import logging
 from config import config
 from trading import trading_engine
 from strategies import (
     market_analyzer, risk_manager, signal_processor, 
-    consolidation_detector, crash_protection
+    consolidation_detector, crash_protection, EnhancedSignalProcessor
 )
 from utils import (
     cache_manager, memory_manager, system_monitor, 
-    data_validator, json_helper, time_helper, logger_helper
+    data_validator, json_helper, time_helper, logger_helper,
+    LoggerConfig, TradeLogger, DataManager, save_trade_record
 )
-from logger_config import log_info, log_warning, log_error
-from trade_logger import trade_logger
-from data_manager import update_system_status, save_trade_record, data_management_system
 from ai_client import ai_client
-from signal_executor import SignalExecutor
+# signal_executor模块已整合到strategies.py中
 import asyncio
+
+# 设置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler(f'logs/alpha_arena-{datetime.now().strftime("%Y%m%d")}.log'),
+        logging.StreamHandler()
+    ]
+)
+log_info = logging.getLogger('alpha_arena').info
+log_warning = logging.getLogger('alpha_arena').warning
+log_error = logging.getLogger('alpha_arena').error
 
 class AlphaArenaBot:
     """Alpha Arena OKX 交易机器人主类"""
@@ -37,7 +49,7 @@ class AlphaArenaBot:
         self.last_signal = None
         self.price_history = []
         self.signal_cache = {}
-        self.data_manager = data_management_system
+        self.data_manager = DataManager()
         
         log_info("🚀 Alpha Arena OKX 交易机器人初始化中...")
         self._display_startup_info()
@@ -191,7 +203,7 @@ class AlphaArenaBot:
                 profit_pct = (price - entry_price) / entry_price
                 
                 # 盈利保护
-                if profit_pct > 0.05:  # 盈利超过5%
+                if profit_pct > 0.12:  # 盈利超过5%
                     signal = 'SELL' if position['side'] == 'long' else 'BUY'
                     confidence = 0.9
                     kmi_reason = f"Kimi: 当前持仓盈利{profit_pct:.2%}，触发盈利保护机制，建议平仓锁定利润。"
@@ -525,19 +537,10 @@ class AlphaArenaBot:
             else:
                 volatility = 'normal'
 
-            # 计算价格变化率 - 使用配置的K线周期
-            price_history_data = market_data.get('price_history', [])
-            price_change_pct = 0
-            if len(price_history_data) >= 2:
-                previous_kline = price_history_data[-2]
-                previous_price = previous_kline.get('close', market_data['price'])
-                if previous_price > 0:
-                    price_change_pct = (market_data['price'] - previous_price) / previous_price
-            elif len(self.price_history) >= 2:
-                # 回退使用价格历史
-                previous_price = self.price_history[-2]
-                if previous_price > 0:
-                    price_change_pct = (market_data['price'] - previous_price) / previous_price
+            # 使用主计算逻辑的价格变化率，避免重复计算
+            # 主计算逻辑已在execute_trading_cycle中正确计算price_change_pct
+            # 这里从market_data中获取已计算好的值
+            price_change_pct = market_data.get('price_change_pct', 0)
 
             # 检查横盘利润锁定
             should_lock_profit = False
@@ -609,23 +612,53 @@ class AlphaArenaBot:
             price_history = market_data.get('price_history', [])
             if len(price_history) >= 2:
                 # 使用上一个完整K线的收盘价作为基准
-                previous_kline = price_history[-2]
-                previous_price = previous_kline.get('close', current_price)
-                price_change_pct = ((current_price - previous_price) / previous_price) * 100
-                
-                # 获取K线时间戳用于显示周期
-                kline_time = datetime.fromtimestamp(previous_kline.get('timestamp', 0)/1000)
-                log_info(f"上一个K线时间: {kline_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                try:
+                    previous_kline = price_history[-2]
+                    previous_price = float(previous_kline.get('close', current_price))
+                    
+                    # 确保价格有效
+                    if previous_price > 0 and current_price > 0:
+                        price_change_pct = ((current_price - previous_price) / previous_price) * 100
+                        
+                        # 获取K线时间戳用于显示周期
+                        kline_time = datetime.fromtimestamp(previous_kline.get('timestamp', 0)/1000)
+                        log_info(f"上一个K线时间: {kline_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    else:
+                        price_change_pct = 0.0
+                        log_info("⚠️ 价格数据无效，使用0.00%")
+                        
+                except (ValueError, TypeError) as e:
+                    price_change_pct = 0.0
+                    log_info(f"⚠️ 价格计算异常: {e}")
             else:
-                price_change_pct = 0.0
-                log_info("⚠️ 历史数据不足，价格变化显示为0.00%")
+                # 尝试使用更近期的数据
+                if len(price_history) >= 1:
+                    try:
+                        last_kline = price_history[-1]
+                        last_price = float(last_kline.get('close', current_price))
+                        if last_price > 0 and current_price > 0:
+                            price_change_pct = ((current_price - last_price) / last_price) * 100
+                        else:
+                            price_change_pct = 0.0
+                    except (ValueError, TypeError):
+                        price_change_pct = 0.0
+                else:
+                    price_change_pct = 0.0
+                    log_info("⚠️ 历史数据不足，价格变化显示为0.00%")
             
             log_info(f"BTC当前价格: ${current_price:,.2f}")
             log_info(f"数据周期: {cycle_time}")
-            log_info(f"价格变化: {price_change_pct:+.2f}% (基于上一个{cycle_time}周期K线)")
+            
+            # 更智能的价格变化显示
+            if abs(price_change_pct) < 0.01 and len(price_history) < 2:
+                log_info(f"价格变化: 初始化数据中...")
+            else:
+                log_info(f"价格变化: {price_change_pct:+.2f}% (基于上一个{cycle_time}周期K线)")
             
             # 2. 分析市场状态
             log_info("🔍 分析市场状态...")
+            # 将计算好的价格变化率传递给市场状态分析
+            market_data['price_change_pct'] = price_change_pct
             market_state = self.analyze_market_state(market_data)
             
             # 详细市场状态日志
@@ -665,51 +698,33 @@ class AlphaArenaBot:
                 log_error(f"获取AI信号失败: {e}")
                 return
             
-            # 4. 处理信号
+            # 4. 初始化信号处理器
+            signal_processor = EnhancedSignalProcessor(trading_engine)
+            
+            # 5. 处理信号并执行交易决策
             log_info("🔍 处理交易信号...")
             try:
-                final_signal = signal_processor.process_signal(
-                    signal_data, market_data.get('position')
-                )
-                log_info(f"🎯 最终交易信号: {final_signal}")
-            except Exception as e:
-                log_error(f"处理信号失败: {e}")
-                return
-            
-            # 5. 执行交易决策
-            allow_short_selling = config.get('trading', 'allow_short_selling', False)
-            position = market_data.get('position')
-            
-            # 使用信号执行器处理所有信号场景
-            signal_executor = SignalExecutor(trading_engine, config)
-            
-            log_info(f"🎯 准备执行交易: {final_signal}")
-            try:
-                success = signal_executor.execute_signal(
-                    final_signal, signal_data, market_data, market_state
-                )
+                success = signal_processor.process_signal(signal_data, market_data)
                 if success:
                     log_info("✅ 信号执行完成")
                 else:
                     log_warning("⚠️ 信号执行未完成或无需执行")
             except Exception as e:
                 log_error(f"执行交易决策失败: {e}")
+                return
             
-            # 6. 检查持仓止盈止损状态（仅在非HOLD信号时）
-            if final_signal != 'HOLD':
-                log_info("🔍 检查持仓止盈止损状态...")
-                try:
-                    self._update_risk_management(market_data, market_state)
-                except Exception as e:
-                    log_error(f"更新风险管理失败: {e}")
+            # 6. 检查持仓止盈止损状态
+            log_info("🔍 检查持仓止盈止损状态...")
+            try:
+                self._update_risk_management(market_data, market_state)
+            except Exception as e:
+                log_error(f"更新风险管理失败: {e}")
             
-            # 7. 检查横盘利润锁定（仅在非HOLD信号时）
-            if final_signal != 'HOLD':
-                log_info("🔒 检查横盘利润锁定...")
-                try:
-                    self._check_consolidation_profit_lock(market_data)
-                except Exception as e:
-                    log_error(f"检查横盘利润锁定失败: {e}")
+            # 7. 检查横盘利润锁定
+            try:
+                self._check_consolidation_profit_lock(market_data)
+            except Exception as e:
+                log_error(f"检查横盘利润锁定失败: {e}")
             
             # 8. 系统维护（始终执行）
             log_info("🔧 执行系统维护...")
@@ -739,125 +754,73 @@ class AlphaArenaBot:
     
     def _execute_trade_signal(self, signal: str, signal_data: Dict[str, Any], 
                             market_data: Dict[str, Any], market_state: Dict[str, Any]):
-        """执行交易信号"""
-        log_info(f"🎯 执行交易信号: {signal}")
+        """执行交易信号 - 使用增强型信号处理器"""
+        try:
+            # 使用增强型信号处理器
+            from strategies import EnhancedSignalProcessor
+            processor = EnhancedSignalProcessor(trading_engine)
+            
+            # 执行完整的交易逻辑
+            success = processor.process_signal(signal_data, market_data)
+            
+            if success:
+                log_info("✅ 增强型交易执行成功")
+                # 记录交易日志
+                trade_record = {
+                    'timestamp': datetime.now().isoformat(),
+                    'signal': signal,
+                    'price': market_data['price'],
+                    'reason': signal_data.get('reason', '策略信号'),
+                    'market_state': market_state
+                }
+                self.data_manager.save_trade_log(trade_record)
+            else:
+                log_error("❌ 增强型交易执行失败")
+                
+        except Exception as e:
+            log_error(f"增强型交易执行异常: {e}")
+            # 回退到简化执行逻辑
+            log_info("⚠️ 回退到简化执行逻辑")
+            self._simplified_execute_trade_signal(signal, signal_data, market_data, market_state)
+
+    def _simplified_execute_trade_signal(self, signal: str, signal_data: Dict[str, Any], 
+                                     market_data: Dict[str, Any], market_state: Dict[str, Any]):
+        """简化执行逻辑 - 作为回退"""
+        log_info(f"🎯 简化执行交易信号: {signal}")
         
         current_price = market_data['price']
         position = market_data.get('position')
         
-        # 检查暴跌保护
-        crash_decision = market_state.get('crash_protection', {})
-        if crash_decision.get('should_protect', False):
-            log_info(f"🚨 暴跌保护触发 - 风险等级: {crash_decision.get('risk_level', 'unknown')}")
-            log_info(f"   触发原因: {crash_decision.get('reason', '未知')}")
-            
-            # 根据风险等级调整交易行为
-            if crash_decision.get('action') in ['IMMEDIATE_CLOSE', 'EMERGENCY_STOP']:
-                signal = 'SELL'  # 强制平仓
-                signal_data['reason'] = f'暴跌保护: {crash_decision.get("reason", "")}'
-                log_info("🛑 执行强制平仓操作")
-            elif crash_decision.get('action') == 'PROTECTIVE_STOP':
-                # 继续交易但增强保护
-                signal_data['reason'] = '暴跌保护模式'
-                log_info("⚠️ 进入暴跌保护模式")
-        
-        # 检查横盘利润锁定
-        if market_state.get('should_lock_profit', False) and position:
-            log_info("🔒 检测到横盘利润锁定条件，执行平仓操作")
-            signal = 'SELL'  # 强制平仓
-            signal_data['reason'] = '横盘利润锁定'
-        
-        # 计算动态止盈止损
-        log_info("📊 计算动态止盈止损...")
-        tp_sl_params = risk_manager.calculate_dynamic_tp_sl(
-            signal, current_price, market_state, position
-        )
-        
-        log_info(f"📊 止盈止损参数:")
-        log_info(f"   - 止损价格: ${tp_sl_params['stop_loss']:.2f}")
-        log_info(f"   - 止盈价格: ${tp_sl_params['take_profit']:.2f}")
-        log_info(f"   - 止损百分比: {tp_sl_params['sl_pct']:.2%}")
-        log_info(f"   - 止盈百分比: {tp_sl_params['tp_pct']:.2%}")
-        
-        # 根据暴跌风险调整止盈止损
-        crash_decision = market_state.get('crash_protection', {})
-        if crash_decision.get('risk_level') == 'HIGH':
-            # 高风险时收紧止损
-            adjusted_sl = current_price * 0.99 if signal == 'BUY' else current_price * 1.01
-            adjusted_tp = current_price * 1.01 if signal == 'BUY' else current_price * 0.99
-            
-            tp_sl_params['stop_loss'] = adjusted_sl
-            tp_sl_params['take_profit'] = adjusted_tp
-            
-            log_info("⚠️ 高风险模式，收紧止盈止损:")
-            log_info(f"   - 调整后止损: ${adjusted_sl:.2f}")
-            log_info(f"   - 调整后止盈: ${adjusted_tp:.2f}")
+        # 使用信号处理器处理
+        processed_signal = signal_processor.process_signal(signal_data, position)
+        if processed_signal == 'HOLD':
+            log_info("📊 保持持仓，跳过交易")
+            return
         
         # 计算订单大小
-        log_info("💰 计算订单大小...")
         order_size = signal_processor.calculate_order_size(
-            market_data['balance'], signal, current_price
+            market_data['balance'], processed_signal, current_price
         )
-        
-        log_info(f"📊 订单详情:")
-        log_info(f"   - 交易方向: {signal}")
-        log_info(f"   - 订单数量: {order_size:.4f} 张")
-        log_info(f"   - 当前价格: ${current_price:.2f}")
-        # 使用多AI融合的详细理由作为交易理由
-        fusion_reason = signal_data.get('fusion_analysis', {}).get('fusion_reason', '')
-        trade_reason = fusion_reason if fusion_reason else signal_data.get('reason', '策略信号')
-        log_info(f"   - 交易理由: {trade_reason}")
         
         if order_size <= 0:
             log_warning("⚠️ 订单大小为0，跳过交易")
             return
         
-        # 执行带止盈止损的交易
-        log_info("🚀 执行交易...")
+        # 计算止盈止损
+        tp_sl_params = risk_manager.calculate_dynamic_tp_sl(
+            processed_signal, current_price, market_state, position
+        )
+        
+        # 执行交易
         success = trading_engine.execute_trade_with_tp_sl(
-            signal, order_size, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
+            processed_signal, order_size, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
         )
         
         if success:
-            log_info("✅ 交易执行成功")
-            # 记录交易日志
-            trade_record = {
-                'timestamp': datetime.now().isoformat(),
-                'signal': signal,
-                'price': current_price,
-                'size': order_size,
-                'stop_loss': tp_sl_params['stop_loss'],
-                'take_profit': tp_sl_params['take_profit'],
-                'reason': signal_data.get('fusion_analysis', {}).get('fusion_reason', signal_data.get('reason', '策略信号')),
-                'confidence': signal_data.get('confidence', 0.5)
-            }
-            
-            try:
-                save_trade_record(trade_record)
-                log_info("📊 交易记录已保存")
-            except Exception as e:
-                log_warning(f"保存交易记录失败: {e}")
+            log_info("✅ 简化执行成功")
         else:
-            log_error("❌ 交易执行失败")
-        
-        if success:
-            system_monitor.increment_counter('trades')
-            logger_helper.log_trade_event('TRADE_EXECUTED', {
-                'signal': signal,
-                'price': market_data['price'],
-                'size': order_size,
-                'confidence': signal_data['confidence'],
-                'reason': signal_data.get('fusion_analysis', {}).get('fusion_reason', signal_data.get('reason', 'AI signal')),
-                'stop_loss': tp_sl_params['stop_loss'],
-                'take_profit': tp_sl_params['take_profit'],
-                'risk_level': tp_sl_params['risk_level'],
-                'tp_sl_confidence': tp_sl_params['confidence'],
-                'crash_protection': crash_decision
-            })
-            
-            # 保存交易记录
-            self._save_trade_record(signal, market_data, signal_data, order_size)
-    
+            log_error("❌ 简化执行失败")
+
     def _update_risk_management(self, market_data: Dict[str, Any], market_state: Dict[str, Any]):
         """更新风险管理"""
         position = market_data.get('position')
@@ -885,49 +848,23 @@ class AlphaArenaBot:
         else:  # short
             pnl_percentage = (entry_price - current_price) / entry_price * 100
         
-        log_info(f"📊 当前持仓详情:")
-        log_info(f"   - 方向: {side.upper()}")
-        log_info(f"   - 数量: {size:.4f} 张")
-        log_info(f"   - 入场价: ${entry_price:.2f}")
-        log_info(f"   - 当前价: ${current_price:.2f}")
-        log_info(f"   - 未实现盈亏: {unrealized_pnl:+.2f} USDT ({pnl_percentage:+.2f}%)")
+        # 价格暴跌保护检查
+        if self._check_price_crash_protection(current_position, market_data):
+            return
         
         # 计算动态止盈止损
-        log_info("📊 计算动态止盈止损...")
         signal = 'BUY' if current_position['side'] == 'long' else 'SELL'
         
         dynamic_tp_sl = risk_manager.calculate_dynamic_tp_sl(
             signal, current_price, market_state, current_position
         )
         
-        log_info(f"📊 智能止盈止损计算结果:")
-        log_info(f"   - 止损价格: ${dynamic_tp_sl['stop_loss']:.2f}")
-        log_info(f"   - 止盈价格: ${dynamic_tp_sl['take_profit']:.2f}")
-        log_info(f"   - 止损距离: {dynamic_tp_sl['sl_pct']:.2%}")
-        log_info(f"   - 止盈距离: {dynamic_tp_sl['tp_pct']:.2%}")
-        
-        # 价格暴跌保护检查
-        if self._check_price_crash_protection(current_position, market_data):
-            log_info("🛡️ 价格暴跌保护激活，跳过止损更新")
-            return
-        
-        # 检查当前止盈止损状态
-        log_info("🔍 检查当前止盈止损状态...")
-        
         # 更新止盈止损
-        log_info("🔄 更新止盈止损...")
-        success = trading_engine.update_risk_management(
+        trading_engine.update_risk_management(
             current_position,
             dynamic_tp_sl['stop_loss'],
             dynamic_tp_sl['take_profit']
         )
-        
-        if success:
-            log_info(f"🛡️ 风险管理更新成功")
-            log_info(f"   止损: ${dynamic_tp_sl['stop_loss']:.2f}")
-            log_info(f"   止盈: ${dynamic_tp_sl['take_profit']:.2f}")
-        else:
-            log_error("❌ 风险管理更新失败")
     
     def _check_price_crash_protection(self, position: Dict[str, Any], 
                                     market_data: Dict[str, Any]) -> bool:
@@ -957,67 +894,23 @@ class AlphaArenaBot:
         position = market_data.get('position')
         
         if not position or position.get('size', 0) <= 0:
-            log_info("📭 无持仓，跳过横盘利润锁定检查")
             return
         
-        log_info("🔒 开始检查横盘利润锁定条件...")
-        
         try:
-            current_price = market_data['price']
-            entry_price = position['entry_price']
-            side = position['side']
-            size = position['size']
-            
-            # 计算当前盈利
-            if side == 'long':
-                profit_pct = (current_price - entry_price) / entry_price * 100
-            else:  # short
-                profit_pct = (entry_price - current_price) / entry_price * 100
-            
-            log_info(f"📊 当前持仓盈利状态:")
-            log_info(f"   - 方向: {side.upper()}")
-            log_info(f"   - 数量: {size:.4f} 张")
-            log_info(f"   - 入场价: ${entry_price:.2f}")
-            log_info(f"   - 当前价: ${current_price:.2f}")
-            log_info(f"   - 盈利百分比: {profit_pct:+.2f}%")
-            
             price_history = self._get_price_history_for_analysis()
             
             if not price_history:
-                log_warning("⚠️ 价格历史数据不足，跳过横盘检查")
                 return
-                
-            log_info(f"📊 获取价格历史数据: {len(price_history)} 条记录")
             
-            try:
-                should_lock = consolidation_detector.should_lock_profit(position, market_data, price_history)
-                log_info(f"✅ 横盘利润锁定条件: {should_lock}")
-            except Exception as e:
-                log_error(f"检查横盘利润锁定异常: {e}")
-                should_lock = False
-            
+            should_lock = consolidation_detector.should_lock_profit(position, market_data, price_history)
             if should_lock:
-                log_info("✅ 横盘利润锁定条件满足")
-                log_info(f"   - 触发锁定价格: ${current_price:.2f}")
-                log_info(f"   - 锁定盈利: {profit_pct:.2f}%")
-                
-                # 记录锁定事件
-                lock_record = {
-                    'timestamp': datetime.now().isoformat(),
-                    'type': 'CONSOLIDATION_LOCK',
-                    'price': current_price,
-                    'profit_pct': profit_pct,
-                    'position_side': side,
-                    'position_size': size
-                }
-                
-                try:
-                    save_trade_record(lock_record)
-                    log_info("📊 横盘锁定记录已保存")
-                except Exception as e:
-                    log_warning(f"保存横盘锁定记录失败: {e}")
-            else:
-                log_info("📊 横盘利润锁定条件不满足，继续持有")
+                # 执行利润锁定前再次验证持仓
+                current_position = trading_engine.get_position_info()
+                if current_position['has_position'] and current_position['side'] == position['side']:
+                    actual_size = min(position['size'], current_position['size'])
+                    if actual_size > 0:
+                        trading_engine.order_manager.cancel_all_tp_sl_orders()
+                        trading_engine.close_position(position['side'], actual_size)
                 
         except Exception as e:
             log_error(f"检查横盘利润锁定异常: {e}")

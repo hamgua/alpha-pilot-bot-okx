@@ -13,7 +13,10 @@ import concurrent.futures
 from dataclasses import dataclass
 
 from config import config
-from logger_config import log_info, log_error, log_warning
+import logging
+log_info = logging.getLogger('alpha_arena').info
+log_error = logging.getLogger('alpha_arena').error
+log_warning = logging.getLogger('alpha_arena').warning
 
 @dataclass
 class AISignal:
