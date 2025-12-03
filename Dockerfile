@@ -1,5 +1,5 @@
 # 使用Python 3.11官方镜像作为基础镜像
-FROM hamgua/alpha-arena-okx:base_v1.0.1
+FROM hamgua/alpha-pilot-bot-okx:base_v1.0.0
 
 # 设置时区
 ENV TZ=Asia/Shanghai
