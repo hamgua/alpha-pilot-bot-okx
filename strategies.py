@@ -473,6 +473,14 @@ class EnhancedSignalProcessor:
     def __init__(self, trading_engine):
         self.trading_engine = trading_engine
         self.consolidation_detector = ConsolidationDetector()
+        self.sell_signal_history = []  # 记录SELL信号历史用于噪音过滤
+        self.last_sell_signal_time = None
+        self.last_tp_sl_update_time = {}  # 记录上次TP/SL更新时间，防止高频更新
+        self.current_position_info = {}  # 记录当前持仓信息
+        
+        # 新增：连续HOLD信号计数器（用于横盘逻辑）
+        self.consecutive_hold_count = 0
+        self.last_signal_type = None  # 记录上次信号类型
         
     def process_signal(self, signal_data: Dict[str, Any], market_data: Dict[str, Any]) -> bool:
         """
@@ -490,14 +498,22 @@ class EnhancedSignalProcessor:
             position = market_data.get('position')
             allow_short = config.get('trading', 'allow_short_selling', False)
             
+            # 更新连续信号计数器
+            self._update_signal_counter(signal)
+            
             log_info(f"🎯 开始执行AI信号: {signal}")
             log_info(f"   做空开关: {'开启' if allow_short else '关闭'}")
             log_info(f"   当前持仓: {self._format_position_info(position)}")
+            log_info(f"   连续HOLD信号: {self.consecutive_hold_count}次")
             
             if allow_short:
-                return self._execute_with_short_enabled(signal, position, signal_data, market_data)
+                result = self._execute_with_short_enabled(signal, position, signal_data, market_data)
             else:
-                return self._execute_with_short_disabled(signal, position, signal_data, market_data)
+                result = self._execute_with_short_disabled(signal, position, signal_data, market_data)
+            
+            # 记录信号历史
+            self.last_signal_type = signal
+            return result
                 
         except Exception as e:
             log_error(f"执行AI信号失败: {e}")
@@ -556,31 +572,209 @@ class EnhancedSignalProcessor:
     def _handle_sell_signal_short_disabled(self, position: Optional[Dict], 
                                          signal_data: Dict, market_data: Dict) -> bool:
         """处理SELL信号（做空功能关闭）"""
-        if position and position.get('size', 0) > 0:
-            log_info("📈 有多头持仓，执行平仓操作")
-            return self._execute_liquidation('long', position)
-        else:
+        sell_config = config.get('strategies', 'sell_signal_strategy', {})
+        
+        if not sell_config.get('enabled', True):
+            log_info("🚫 SELL信号策略已禁用")
+            return True
+            
+        if not position or position.get('size', 0) <= 0:
             log_info("🚫 无多头持仓，不执行任何操作")
             return True
+            
+        # 记录当前SELL信号
+        current_time = datetime.now()
+        self.sell_signal_history.append({
+            'time': current_time,
+            'signal': signal_data,
+            'market_data': market_data
+        })
+        
+        # 清理过期的历史记录（保留最近10次）
+        self.sell_signal_history = self.sell_signal_history[-10:]
+        
+        # 检查是否满足SELL确认条件
+        if not self._should_execute_sell_close(position, signal_data, market_data):
+            log_info("🚫 SELL信号未通过噪音过滤，不执行平仓")
+            return True
+            
+        # 执行平仓操作
+        return self._execute_confirmed_sell_close(position, signal_data, market_data)
+    
+    def _should_execute_sell_close(self, position: Dict, signal_data: Dict, market_data: Dict) -> bool:
+        """判断是否应该执行SELL平仓操作（噪音过滤）"""
+        sell_config = config.get('strategies', 'sell_signal_strategy', {})
+        
+        # 条件A：连续SELL信号
+        consecutive_sell_count = sell_config.get('consecutive_sell_count', 2)
+        recent_sells = sum(1 for record in self.sell_signal_history[-consecutive_sell_count:] 
+                          if record['signal'].get('signal') == 'SELL')
+        has_consecutive_sell = recent_sells >= consecutive_sell_count
+        
+        # 条件B：价格跌破均线
+        ma_period = sell_config.get('ma_period', 15)
+        price_break_threshold = sell_config.get('price_break_ma_threshold', 0.001)
+        current_price = market_data['price']
+        
+        # 计算移动平均线
+        price_history = self._get_price_history()
+        ma_price = None
+        if len(price_history) >= ma_period:
+            ma_price = np.mean(price_history[-ma_period:])
+            price_break_ma = (current_price < ma_price * (1 - price_break_threshold))
+        else:
+            price_break_ma = False
+        
+        # 条件C：当前浮盈≥0
+        entry_price = position.get('entry_price', current_price)
+        current_pnl = (current_price - entry_price) / entry_price
+        min_profit_threshold = sell_config.get('min_profit_threshold', 0.0)
+        has_profit = current_pnl >= min_profit_threshold
+        
+        # 条件D：价格反向偏移≥阈值
+        reverse_offset_threshold = sell_config.get('reverse_offset_threshold', 0.005)
+        price_reverse_offset = abs(current_price - entry_price) / entry_price
+        has_reverse_offset = price_reverse_offset >= reverse_offset_threshold and current_price < entry_price
+        
+        # 记录判断结果
+        conditions = {
+            'consecutive_sell': has_consecutive_sell,
+            'price_break_ma': price_break_ma,
+            'has_profit': has_profit,
+            'price_reverse_offset': has_reverse_offset,
+            'current_pnl': current_pnl,
+            'ma_price': ma_price
+        }
+        
+        # 满足任一条件即可执行平仓
+        should_execute = any([has_consecutive_sell, price_break_ma, has_profit, has_reverse_offset])
+        
+        log_info(f"🔍 SELL信号噪音过滤检查:")
+        log_info(f"   连续SELL信号: {'✅' if has_consecutive_sell else '❌'} ({recent_sells}/{consecutive_sell_count})")
+        ma_display = f"${ma_price:.2f}" if ma_price is not None else "N/A"
+        log_info(f"   价格跌破均线: {'✅' if price_break_ma else '❌'} (${current_price:.2f} vs MA {ma_display})")
+        log_info(f"   当前浮盈: {'✅' if has_profit else '❌'} ({current_pnl:.2%})")
+        log_info(f"   价格反向偏移: {'✅' if has_reverse_offset else '❌'} ({price_reverse_offset:.2%})")
+        log_info(f"   最终判断: {'✅ 执行平仓' if should_execute else '❌ 不执行'}")
+        
+        return should_execute
+    
+    def _execute_confirmed_sell_close(self, position: Dict, signal_data: Dict, market_data: Dict) -> bool:
+        """执行确认的SELL平仓操作"""
+        sell_config = config.get('strategies', 'sell_signal_strategy', {})
+        
+        try:
+            current_price = market_data['price']
+            position_size = position.get('size', 0)
+            entry_price = position.get('entry_price', current_price)
+            
+            if position_size <= 0:
+                log_warning("⚠️ 持仓数量为0，无法平仓")
+                return False
+            
+            # 记录卖出原因
+            sell_reason = {
+                'signal': 'SELL',
+                'trigger_time': datetime.now().isoformat(),
+                'current_price': current_price,
+                'entry_price': entry_price,
+                'position_size': position_size,
+                'pnl_percentage': (current_price - entry_price) / entry_price * 100,
+                'signal_data': signal_data,
+                'market_data': {
+                    'price': current_price,
+                    'volume': market_data.get('volume', 0),
+                    'timestamp': market_data.get('timestamp', datetime.now().isoformat())
+                }
+            }
+            
+            log_info(f"📉 执行SELL信号平仓操作:")
+            log_info(f"   平仓数量: {position_size:.4f} 张")
+            log_info(f"   当前价格: ${current_price:.2f}")
+            log_info(f"   入场价格: ${entry_price:.2f}")
+            log_info(f"   盈亏: {sell_reason['pnl_percentage']:.2f}%")
+            
+            # 1. 执行平仓
+            success = self._execute_liquidation('long', position)
+            if not success:
+                log_error("❌ 平仓操作失败")
+                return False
+            
+            # 2. 取消所有未成交订单
+            if sell_config.get('cancel_all_pending_orders', True):
+                log_info("🗑️ 取消所有未成交委托单...")
+                cancel_success = self.trading_engine.cancel_all_orders()
+                if cancel_success:
+                    log_info("✅ 已取消所有未成交订单")
+                else:
+                    log_warning("⚠️ 取消订单操作失败")
+            
+            # 3. 记录卖出原因
+            if sell_config.get('log_sell_reason', True):
+                log_info(f"📝 记录卖出原因: {sell_reason}")
+                # 这里可以扩展为写入日志文件或数据库
+                trade_logger.info(f"SELL_CLOSE_REASON: {sell_reason}")
+            
+            log_info("✅ SELL信号平仓操作完成")
+            return True
+            
+        except Exception as e:
+            log_error(f"执行SELL信号平仓失败: {e}")
+            return False
+    
+    def _get_price_history(self) -> list:
+        """获取价格历史数据用于技术分析"""
+        # 从trading_engine获取历史价格数据
+        try:
+            # 尝试从trading_engine获取K线数据
+            if hasattr(self.trading_engine, 'exchange_manager'):
+                klines = self.trading_engine.exchange_manager.get_klines('5m', 50)
+                if klines and len(klines) > 0:
+                    return [float(kline[4]) for kline in klines]  # 使用收盘价
+        except Exception as e:
+            log_warning(f"获取价格历史数据失败: {e}")
+        
+        # 如果无法获取历史数据，返回空列表作为回退
+        return []
     
     def _handle_hold_signal_short_disabled(self, position: Optional[Dict], 
                                          signal_data: Dict, market_data: Dict) -> bool:
-        """处理HOLD信号（做空功能关闭）"""
-        if position and position.get('size', 0) > 0:
+        """处理HOLD信号（做空功能关闭）- 横盘利润锁定"""
+        if not position or position.get('size', 0) <= 0:
+            log_info("📭 当前无持仓，HOLD信号无操作")
+            return True
+            
+        log_info("📊 有持仓，执行横盘利润锁定检查...")
+        
+        # 检查是否满足横盘平仓条件
+        if self._should_trigger_consolidation_close(position, market_data):
+            log_info("✅ 满足横盘平仓条件，执行平仓操作")
             return self._execute_consolidation_action(position, market_data)
         else:
-            log_info("🚫 无持仓，不执行任何操作")
+            log_info("📊 未满足横盘平仓条件，保持持仓")
             return True
     
     def _handle_buy_signal_short_disabled(self, position: Optional[Dict], 
                                         signal_data: Dict, market_data: Dict) -> bool:
-        """处理BUY信号（做空功能关闭）"""
-        if position and position.get('size', 0) > 0:
-            log_info("📈 已有做多持仓，更新止盈止损订单")
-            return self._update_tp_sl_orders(position, market_data, 'long')
+        """处理BUY信号（做空功能关闭）- 优化版逻辑"""
+        buy_config = config.get('strategies', 'buy_signal_strategy', {})
+        
+        if not buy_config.get('enabled', True):
+            log_info("🚫 BUY信号策略已禁用")
+            return True
+            
+        # 清除横盘计数（BUY信号表示趋势已改变）
+        if buy_config.get('clear_consolidation_on_buy', True):
+            self._clear_consolidation_counters()
+            
+        if not position or position.get('size', 0) <= 0:
+            # 情况1：当前无多头持仓 - 执行开仓
+            log_info("🔄 无持仓，执行做多开仓操作")
+            return self._execute_buy_new_position(signal_data, market_data)
         else:
-            log_info("🔄 无持仓，执行做多操作")
-            return self._execute_long_position(signal_data, market_data)
+            # 情况2：当前已有多头持仓 - 更新止盈止损但不补仓
+            log_info("📈 已有多头持仓，评估是否需要更新止盈止损")
+            return self._update_tp_sl_conservatively(position, market_data, signal_data)
     
     def _handle_hold_signal(self, position: Optional[Dict], 
                           signal_data: Dict, market_data: Dict) -> bool:
@@ -625,8 +819,8 @@ class EnhancedSignalProcessor:
             log_error(f"执行做空操作失败: {e}")
             return False
     
-    def _execute_long_position(self, signal_data: Dict, market_data: Dict) -> bool:
-        """执行做多操作"""
+    def _execute_buy_new_position(self, signal_data: Dict, market_data: Dict) -> bool:
+        """执行新的做多开仓操作（无持仓时）"""
         try:
             price = market_data['price']
             position_size = self._calculate_position_size(signal_data, market_data)
@@ -634,15 +828,144 @@ class EnhancedSignalProcessor:
                 log_warning("⚠️ 计算出的仓位大小无效，跳过多单操作")
                 return False
             
-            log_info(f"📈 执行做多: 数量 {position_size:.4f} 张 @ ${price:.2f}")
+            log_info(f"📈 执行新的做多开仓: 数量 {position_size:.4f} 张 @ ${price:.2f}")
+            
+            # 执行开仓
             success = self.trading_engine.place_limit_order('BUY', position_size, price)
             if success:
+                # 设置新的止盈止损订单
                 self._setup_tp_sl_for_new_position('long', position_size, price, signal_data)
-                log_info("✅ 做多操作完成")
+                
+                # 更新当前持仓信息
+                self.current_position_info = {
+                    'side': 'long',
+                    'size': position_size,
+                    'entry_price': price,
+                    'entry_time': datetime.now(),
+                    'last_update': datetime.now()
+                }
+                
+                log_info("✅ 新的做多开仓完成")
             return success
         except Exception as e:
-            log_error(f"执行做多操作失败: {e}")
+            log_error(f"执行新的做多开仓失败: {e}")
             return False
+    
+    def _update_tp_sl_conservatively(self, position: Dict, market_data: Dict, signal_data: Dict) -> bool:
+        """保守更新止盈止损订单（有持仓时不补仓）"""
+        buy_config = config.get('strategies', 'buy_signal_strategy', {})
+        
+        try:
+            # 检查补仓权限
+            if not buy_config.get('allow_rebuy', False):
+                log_info("🚫 已有多头持仓，不允许补仓（保守策略）")
+            
+            # 检查是否需要更新止盈止损
+            should_update = self._should_update_tp_sl_orders(position, market_data, signal_data)
+            if should_update:
+                return self._update_tp_sl_orders_conservative(position, market_data, 'long')
+            else:
+                log_info("📊 止盈止损价格变化不显著，保持原订单不变")
+                return True
+                
+        except Exception as e:
+            log_error(f"保守更新止盈止损失败: {e}")
+            return False
+    
+    def _should_update_tp_sl_orders(self, position: Dict, market_data: Dict, signal_data: Dict) -> bool:
+        """判断是否需要更新止盈止损订单"""
+        buy_config = config.get('strategies', 'buy_signal_strategy', {})
+        
+        if not buy_config.get('prevent_high_frequency_updates', True):
+            return True
+            
+        # 检查更新频率限制
+        max_frequency_minutes = buy_config.get('max_update_frequency_minutes', 5)
+        last_update = self.last_tp_sl_update_time.get('long')
+        
+        if last_update:
+            time_since_update = (datetime.now() - last_update).total_seconds() / 60
+            if time_since_update < max_frequency_minutes:
+                log_info(f"⏰ 距离上次更新仅 {time_since_update:.1f} 分钟，跳过更新（限制：{max_frequency_minutes}分钟）")
+                return False
+        
+        # 检查价格变化是否显著
+        current_price = market_data['price']
+        entry_price = position.get('entry_price', current_price)
+        
+        # 获取新的止盈止损价格
+        new_sl, new_tp = self._calculate_dynamic_tp_sl('long', current_price, position, market_data)
+        
+        # 获取现有订单价格（这里需要获取实际的现有订单价格）
+        # 简化处理：使用当前价格的百分比差异
+        price_update_threshold = buy_config.get('price_update_threshold', 0.005)
+        
+        # 假设当前订单基于当前价格的一定比例
+        current_sl = current_price * 0.98  # 简化的当前止损
+        current_tp = current_price * 1.06  # 简化的当前止盈
+        
+        # 计算价格差异
+        sl_diff = abs(new_sl - current_sl) / current_sl
+        tp_diff = abs(new_tp - current_tp) / current_tp
+        
+        # 如果任一价格变化超过阈值，则更新
+        should_update = sl_diff >= price_update_threshold or tp_diff >= price_update_threshold
+        
+        if should_update:
+            log_info(f"📊 价格变化显著，需要更新: SL变化 {sl_diff:.2%}, TP变化 {tp_diff:.2%}")
+        else:
+            log_info(f"📊 价格变化不显著，无需更新: SL变化 {sl_diff:.2%}, TP变化 {tp_diff:.2%}")
+            
+        return should_update
+    
+    def _update_tp_sl_orders_conservative(self, position: Dict, market_data: Dict, side: str) -> bool:
+        """保守更新止盈止损订单"""
+        try:
+            current_price = market_data['price']
+            position_size = position.get('size', 0)
+            if position_size <= 0:
+                return False
+            
+            stop_loss, take_profit = self._calculate_dynamic_tp_sl(
+                side, current_price, position, market_data
+            )
+            
+            log_info(f"🔄 保守更新止盈止损:")
+            log_info(f"   持仓方向: {side}")
+            log_info(f"   持仓数量: {position_size:.4f} 张")
+            log_info(f"   当前价格: ${current_price:.2f}")
+            log_info(f"   新止损价格: ${stop_loss:.2f}")
+            log_info(f"   新止盈价格: ${take_profit:.2f}")
+            
+            success = self.trading_engine.set_stop_loss_take_profit(
+                side, stop_loss, take_profit, position_size
+            )
+            
+            if success:
+                log_info("   ✅ 保守更新止盈止损完成")
+                # 更新最后更新时间
+                self.last_tp_sl_update_time[side] = datetime.now()
+            else:
+                log_error("   ❌ 保守更新止盈止损失败")
+            return success
+        except Exception as e:
+            log_error(f"保守更新止盈止损失败: {e}")
+            return False
+    
+    def _clear_consolidation_counters(self):
+        """清除横盘相关计数器"""
+        try:
+            if hasattr(self.consolidation_detector, 'consolidation_start_time'):
+                self.consolidation_detector.consolidation_start_time = None
+            if hasattr(self.consolidation_detector, 'last_partial_close_time'):
+                self.consolidation_detector.last_partial_close_time = None
+            log_info("🧹 已清除横盘相关计数器")
+        except Exception as e:
+            log_warning(f"清除横盘计数器失败: {e}")
+    
+    def _execute_long_position(self, signal_data: Dict, market_data: Dict) -> bool:
+        """执行做多操作（向后兼容）"""
+        return self._execute_buy_new_position(signal_data, market_data)
     
     def _execute_consolidation_action(self, position: Dict, market_data: Dict) -> bool:
         """执行横盘利润锁定操作"""
@@ -656,10 +979,27 @@ class EnhancedSignalProcessor:
             
             if should_lock:
                 log_info(f"📊 有{side}持仓，执行横盘利润锁定操作")
-                log_info("🔒 检测到横盘条件，执行利润锁定")
-                self.trading_engine.order_manager.cancel_all_tp_sl_orders()
-                side = position.get('side', 'long')
-                return self._execute_liquidation(side, position)
+                
+                # 执行横盘平仓逻辑
+                result = self.consolidation_detector.execute_consolidation_action(
+                    position, market_data, self.trading_engine
+                )
+                
+                if result['success']:
+                    log_info(f"✅ 横盘平仓执行成功: {result['action']}")
+                    
+                    # 检查是否需要执行额外平仓
+                    additional_result = self.consolidation_detector.check_duration_and_execute_additional_close(
+                        position, market_data, self.trading_engine
+                    )
+                    
+                    if additional_result['success']:
+                        log_info(f"✅ 额外平仓执行成功")
+                    
+                    return True
+                else:
+                    log_error(f"❌ 横盘平仓执行失败: {result['reason']}")
+                    return False
             else:
                 log_info("📊 未检测到横盘条件，保持持仓")
                 return True
@@ -759,10 +1099,15 @@ class EnhancedSignalProcessor:
             log_error(f"计算初始止盈止损失败: {e}")
             return entry_price * 0.98, entry_price * 1.02
     
-    def _get_price_history(self) -> Dict[str, list]:
+    def _get_price_history(self) -> List[Dict]:
         """获取价格历史数据"""
-        # 简化实现，实际应从交易引擎获取
-        return {'close': [50000, 50100, 50200, 50150, 50050] * 10}
+        try:
+            # 从交易引擎获取历史K线数据
+            return self.trading_engine.exchange_manager.get_ohlcv_data(limit=50)
+        except Exception as e:
+            log_error(f"获取价格历史数据失败: {e}")
+            # 回退到简化实现
+            return [{'close': 50000, 'high': 50100, 'low': 49900, 'open': 50000, 'timestamp': int(time.time() * 1000)}] * 50
     
     def _format_position_info(self, position: Optional[Dict]) -> str:
         """格式化持仓信息"""
@@ -814,6 +1159,102 @@ class ConsolidationDetector:
     
     def __init__(self):
         self.config = config.get('strategies', 'profit_lock_strategy')
+        self.consolidation_start_time = None
+        self.is_consolidation_active = False
+        self.partial_close_executed = False
+        self.consolidation_history = []
+        self.last_partial_close_time = None
+        self.remaining_position_after_close = 1.0  # 剩余仓位比例（1.0=100%）
+    
+    def reset_consolidation_state(self):
+        """重置横盘状态"""
+        self.consolidation_start_time = None
+        self.is_consolidation_active = False
+        self.partial_close_executed = False
+        self.consolidation_history.clear()
+        log_info("🔄 横盘状态已重置")
+    
+    def _update_signal_counter(self, current_signal: str):
+        """更新连续信号计数器"""
+        if current_signal == 'HOLD':
+            if self.last_signal_type == 'HOLD':
+                self.consecutive_hold_count += 1
+            else:
+                self.consecutive_hold_count = 1
+        elif current_signal in ['BUY', 'SELL']:
+            # BUY或SELL信号出现时重置HOLD计数器
+            if self.consecutive_hold_count > 0:
+                log_info(f"🔄 {current_signal}信号出现，重置HOLD计数器 ({self.consecutive_hold_count} → 0)")
+                self.consecutive_hold_count = 0
+    
+    def _should_trigger_consolidation_close(self, position: Dict, market_data: Dict) -> bool:
+        """判断是否应触发横盘平仓"""
+        if not position or position.get('size', 0) <= 0:
+            return False
+            
+        # 检查横盘保护是否启用
+        consolidation_config = config.get('strategies', 'consolidation_protection', {})
+        if not consolidation_config.get('enabled', True):
+            return False
+            
+        # 检查连续HOLD信号次数
+        required_hold_count = consolidation_config.get('consecutive_hold_required', 4)
+        
+        if self.consecutive_hold_count < required_hold_count:
+            log_info(f"📊 连续HOLD信号不足: {self.consecutive_hold_count}/{required_hold_count}")
+            return False
+            
+        # 检查价格波动条件
+        price_history = self._get_price_history()
+        lookback_hours = consolidation_config.get('lookback_hours', 2)
+        required_klines = lookback_hours * 12  # 每5分钟一根K线，2小时=24根
+        
+        if len(price_history) < required_klines:
+            log_info(f"📊 历史数据不足: {len(price_history)}/{required_klines}根K线")
+            return False
+            
+        # 计算指定时间内的价格波动
+        recent_prices = [c['close'] for c in price_history[-required_klines:]]
+        if not recent_prices:
+            return False
+            
+        max_price = max(recent_prices)
+        min_price = min(recent_prices)
+        price_range_pct = (max_price - min_price) / min_price
+        
+        # 获取横盘阈值
+        consolidation_threshold = consolidation_config.get('consolidation_threshold', 0.01)
+        
+        is_low_volatility = price_range_pct < consolidation_threshold
+        
+        log_info(f"📊 横盘条件检查:")
+        log_info(f"   连续HOLD: {self.consecutive_hold_count}/{required_hold_count}")
+        log_info(f"   价格波动: {price_range_pct:.3%} (阈值: {consolidation_threshold:.3%})")
+        log_info(f"   回顾时间: {lookback_hours}小时 ({required_klines}根K线)")
+        log_info(f"   结果: {'满足横盘条件' if is_low_volatility else '不满足横盘条件'}")
+        
+        return is_low_volatility
+    
+    def get_consolidation_status(self) -> Dict[str, Any]:
+        """获取当前横盘状态"""
+        if not self.consolidation_start_time:
+            return {
+                'is_active': False,
+                'duration_minutes': 0,
+                'partial_close_done': False,
+                'consolidation_history': len(self.consolidation_history),
+                'start_time': None
+            }
+            
+        duration_minutes = (datetime.now() - self.consolidation_start_time).total_seconds() / 60
+        
+        return {
+            'is_active': self.is_consolidation_active,
+            'duration_minutes': duration_minutes,
+            'partial_close_done': self.partial_close_executed,
+            'consolidation_history': len(self.consolidation_history),
+            'start_time': self.consolidation_start_time.isoformat() if self.consolidation_start_time else None
+        }
     
     def should_lock_profit(self, position: Dict[str, Any], market_data: Dict[str, Any], 
                           price_history: Dict[str, list]) -> bool:
@@ -927,8 +1368,287 @@ class ConsolidationDetector:
                 log_info(f"   💵 预计锁定金额: ${lock_amount:.2f}")
             else:
                 log_info(f"🔒 横盘利润锁定触发: 满足{score}/{total_checks}项条件")
+            
+            # 更新横盘状态
+            if not self.consolidation_start_time:
+                self.consolidation_start_time = datetime.now()
+                self.is_consolidation_active = True
+                self.consolidation_history.append({
+                    'start_time': self.consolidation_start_time.isoformat(),
+                    'trigger_price': current_price,
+                    'profit_pct': actual_profit_pct if entry_price > 0 and current_price > 0 else 0
+                })
         else:
             log_info(f"📊 横盘利润锁定条件不满足，继续持有观察")
+            # 如果之前检测到横盘但现在不满足，重置状态
+            if self.is_consolidation_active and not self.partial_close_executed:
+                self.reset_consolidation_state()
+        
+        return should_lock
+
+    def execute_consolidation_action(self, position: Dict[str, Any], market_data: Dict[str, Any], 
+                                   trading_engine) -> Dict[str, Any]:
+        """执行横盘触发后的完整平仓逻辑"""
+        
+        log_info("🔄 开始执行横盘平仓操作...")
+        
+        try:
+            if not position or position.get('size', 0) <= 0:
+                return {'success': False, 'reason': '无持仓'}
+            
+            current_price = market_data.get('price', 0)
+            position_size = position.get('size', 0)
+            position_value = position_size * current_price
+            usdt_threshold = self.config.get('usdt_threshold', 100)
+            
+            log_info(f"📊 当前持仓信息:")
+            log_info(f"   持仓数量: {position_size:.4f} BTC")
+            log_info(f"   当前价格: ${current_price:.2f}")
+            log_info(f"   持仓价值: ${position_value:.2f} USDT")
+            log_info(f"   USDT阈值: ${usdt_threshold} USDT")
+            
+            # 判断平仓策略
+            if position_value < usdt_threshold:
+                # 持仓价值小于阈值，全部平仓
+                log_info("⚠️ 持仓价值小于阈值，执行全部平仓")
+                close_amount = position_size
+                close_ratio = 1.0
+            else:
+                # 持仓价值大于等于阈值，执行部分平仓
+                partial_close_ratio = self.config.get('partial_close_ratio', 0.5)
+                close_amount = position_size * partial_close_ratio
+                close_ratio = partial_close_ratio
+                log_info(f"📉 执行部分平仓: {close_ratio*100:.1f}% 仓位")
+            
+            # 执行平仓
+            success = trading_engine.close_position('long', close_amount)
+            if not success:
+                return {'success': False, 'reason': '平仓失败'}
+            
+            # 更新剩余仓位比例
+            self.remaining_position_after_close *= (1 - close_ratio)
+            self.last_partial_close_time = datetime.now()
+            self.partial_close_executed = True
+            
+            log_info(f"✅ 平仓成功: {close_amount:.4f} BTC ({close_ratio*100:.1f}%)")
+            
+            # 为剩余仓位设置移动止损
+            remaining_size = position_size - close_amount
+            if remaining_size > 0:
+                trailing_stop_pct = self.config.get('trailing_stop_pct', 0.008)
+                stop_price = current_price * (1 - trailing_stop_pct)
+                
+                log_info(f"🛡️ 为剩余仓位设置移动止损:")
+                log_info(f"   剩余仓位: {remaining_size:.4f} BTC")
+                log_info(f"   跟踪止损: {trailing_stop_pct*100:.2f}%")
+                log_info(f"   止损价格: ${stop_price:.2f}")
+                
+                # 设置跟踪止损
+                trading_engine.order_manager.set_stop_loss_take_profit('long', stop_price, None, remaining_size)
+            
+            # 订单管理优化
+            if self.config.get('cancel_tp_orders', True):
+                log_info("🔄 取消所有止盈止损订单...")
+                cancelled_count = trading_engine.order_manager.cancel_all_tp_sl_orders()
+                log_info(f"✅ 已取消 {cancelled_count} 个止盈止损订单")
+            
+            if self.config.get('keep_sl_orders', True):
+                log_info("✅ 保留现有止损订单（将通过重新设置实现）")
+            
+            return {
+                'success': True,
+                'close_amount': close_amount,
+                'close_ratio': close_ratio,
+                'remaining_size': remaining_size,
+                'action': 'full_close' if close_ratio == 1.0 else 'partial_close'
+            }
+            
+        except Exception as e:
+            log_error(f"执行横盘平仓操作失败: {e}")
+            return {'success': False, 'reason': str(e)}
+
+    def check_duration_and_execute_additional_close(self, position: Dict[str, Any], 
+                                                  market_data: Dict[str, Any], trading_engine) -> Dict[str, Any]:
+        """检查横盘持续时间并执行额外平仓"""
+        
+        if not self.is_consolidation_active or not self.consolidation_start_time:
+            return {'success': False, 'reason': '未处于横盘状态'}
+        
+        duration_minutes = (datetime.now() - self.consolidation_start_time).total_seconds() / 60
+        duration_check_minutes = self.config.get('duration_check_minutes', 30)
+        
+        if duration_minutes >= duration_check_minutes and not hasattr(self, '_additional_close_executed'):
+            log_info(f"⏰ 横盘持续{duration_minutes:.1f}分钟，超过{duration_check_minutes}分钟阈值")
+            
+            if position and position.get('size', 0) > 0:
+                additional_close_ratio = self.config.get('additional_close_ratio', 0.25)
+                remaining_size = position.get('size', 0)
+                close_amount = remaining_size * additional_close_ratio
+                
+                if close_amount > 0:
+                    log_info(f"📉 执行额外平仓: {additional_close_ratio*100:.1f}% 剩余仓位")
+                    success = trading_engine.close_position('long', close_amount)
+                    
+                    if success:
+                        self.remaining_position_after_close *= (1 - additional_close_ratio)
+                        self._additional_close_executed = True
+                        log_info(f"✅ 额外平仓成功: {close_amount:.4f} BTC")
+                        
+                        return {
+                            'success': True,
+                            'close_amount': close_amount,
+                            'close_ratio': additional_close_ratio,
+                            'action': 'additional_close'
+                        }
+        
+        return {'success': False, 'reason': '未达到额外平仓条件'}
+
+    def get_consolidation_trading_status(self) -> Dict[str, Any]:
+        """获取横盘交易状态"""
+        if not self.consolidation_start_time:
+            return {
+                'is_active': False,
+                'duration_minutes': 0,
+                'partial_close_executed': False,
+                'remaining_position_ratio': 1.0,
+                'additional_close_executed': False
+            }
+        
+        duration_minutes = (datetime.now() - self.consolidation_start_time).total_seconds() / 60
+        
+        return {
+            'is_active': self.is_consolidation_active,
+            'duration_minutes': duration_minutes,
+            'partial_close_executed': self.partial_close_executed,
+            'remaining_position_ratio': self.remaining_position_after_close,
+            'additional_close_executed': getattr(self, '_additional_close_executed', False),
+            'last_partial_close_time': self.last_partial_close_time.isoformat() if self.last_partial_close_time else None
+        }
+        """基于6维度判断的横盘利润锁定决策 - 使用2小时区间"""
+        
+        log_info("🔒 开始检查横盘利润锁定条件...")
+        
+        if not self._basic_checks(position, market_data):
+            return False
+        
+        # 6维度综合评估 - 基于2小时数据
+        score = 0
+        total_checks = 6
+        
+        # 计算实际使用的K线数量和时间区间
+        prices = price_history.get('close', [])
+        actual_periods = min(len(prices), self.config.get('lookback_periods', 24))
+        covered_hours = (actual_periods * 5) / 60  # 转换为小时
+        
+        log_info(f"📊 使用数据区间: {covered_hours:.1f}小时 ({actual_periods}根5分钟K线)")
+        
+        # 执行所有检查并记录状态
+        conditions = []
+        
+        # [1] 盈利状态检查
+        profit_check = self._check_profit_status(position, market_data)
+        conditions.append(('盈利检查', profit_check))
+        if profit_check:
+            score += 1
+        
+        # [2] 波动率计算与分析
+        volatility_check = self._analyze_volatility(price_history)
+        conditions.append(('波动率检查', volatility_check))
+        if volatility_check:
+            score += 1
+        
+        # [3] 时间序列模式识别
+        pattern_check = self._recognize_time_series_pattern(price_history)
+        conditions.append(('时间序列模式', pattern_check))
+        if pattern_check:
+            score += 1
+        
+        # [4] 形态学分析
+        morphology_check = self._analyze_patterns(price_history)
+        conditions.append(('形态学分析', morphology_check))
+        if morphology_check:
+            score += 1
+        
+        # [5] 成交量验证
+        volume_check = self._validate_volume(price_history)
+        conditions.append(('成交量验证', volume_check))
+        if volume_check:
+            score += 1
+        
+        # [6] 触发条件综合判断
+        trigger_check = self._evaluate_trigger_conditions(price_history, market_data)
+        conditions.append(('触发条件评估', trigger_check))
+        if trigger_check:
+            score += 1
+        
+        # 需要满足4项以上条件
+        should_lock = score >= 4
+        
+        # 记录所有条件状态，包含时间区间信息
+        log_info(f"📊 横盘利润锁定检查: 满足{score}/{total_checks}项条件 (基于{covered_hours:.1f}小时数据)")
+        
+        # 显示满足和未满足的条件
+        for i, (condition_name, status) in enumerate(conditions, 1):
+            status_icon = "✅" if status else "❌"
+            log_info(f"[{i}] {status_icon} {condition_name}: {'符合条件' if status else '不符合条件'}")
+        
+        # 显示未满足的条件
+        unmet_conditions = [name for name, status in conditions if not status]
+        if unmet_conditions:
+            log_info(f"❗ 未满足条件: {', '.join(unmet_conditions)}")
+        else:
+            log_info("✅ 所有条件均已满足")
+        
+        # 显示价格区间和利润区间信息
+        if prices and len(prices) >= actual_periods:
+            recent_prices = prices[-actual_periods:]
+            if recent_prices:
+                min_price = min(recent_prices)
+                max_price = max(recent_prices)
+                price_range = max_price - min_price
+                amplitude_pct = (price_range/max_price)*100
+                
+                # 计算利润信息
+                entry_price = position.get('entry_price', 0) if position else 0
+                if entry_price > 0:
+                    current_price = max(recent_prices)  # 使用最新价格
+                    profit_pct = abs(current_price - entry_price) / entry_price * 100
+                    
+                    # 获取锁定阈值用于显示
+                    lock_threshold = self.config.get('min_profit_pct', 0.005)
+                    consolidation_threshold = self.config.get('consolidation_threshold', 0.008)
+                    
+                    log_info(f"📈 价格区间: {min_price:.2f} - {max_price:.2f}，当前振幅: {amplitude_pct:.2f}%(≤{consolidation_threshold*100:.2f}%波动)")
+                    log_info(f"💰 利润区间: 入场价{entry_price:.2f} → 当前价{current_price:.2f}，当前盈利{profit_pct:.2f}% (≥{lock_threshold*100:.2f}%盈利)")
+        
+        if should_lock:
+            # 获取当前价格用于锁定显示
+            current_price = market_data.get('price', 0)
+            entry_price = position.get('entry_price', 0) if position else 0
+            if entry_price > 0 and current_price > 0:
+                actual_profit_pct = abs(current_price - entry_price) / entry_price * 100
+                lock_amount = (current_price - entry_price) * position.get('size', 0) if position else 0
+                log_info(f"🔒 横盘利润锁定触发: 满足{score}/{total_checks}项条件，准备执行利润锁定")
+                log_info(f"   📈 触发锁定价格: ${current_price:.2f}")
+                log_info(f"   💰 锁定盈利: {actual_profit_pct:.2f}%")
+                log_info(f"   💵 预计锁定金额: ${lock_amount:.2f}")
+            else:
+                log_info(f"🔒 横盘利润锁定触发: 满足{score}/{total_checks}项条件")
+            
+            # 更新横盘状态
+            if not self.consolidation_start_time:
+                self.consolidation_start_time = datetime.now()
+                self.is_consolidation_active = True
+                self.consolidation_history.append({
+                    'start_time': self.consolidation_start_time.isoformat(),
+                    'trigger_price': current_price,
+                    'profit_pct': actual_profit_pct if entry_price > 0 and current_price > 0 else 0
+                })
+        else:
+            log_info(f"📊 横盘利润锁定条件不满足，继续持有观察")
+            # 如果之前检测到横盘但现在不满足，重置状态
+            if self.is_consolidation_active and not self.partial_close_executed:
+                self.reset_consolidation_state()
         
         return should_lock
     

@@ -108,6 +108,10 @@ class OrderManager:
     
     def place_market_order(self, side: str, amount: float, reduce_only: bool = False) -> bool:
         """下市价单"""
+        if config.get('trading', 'test_mode'):
+            log_info(f"🧪 模拟市价单: {side} {amount} @ market (reduce_only={reduce_only})")
+            return True
+            
         try:
             # 检查做空权限
             if side.upper() == 'SELL' and not reduce_only:
@@ -141,6 +145,10 @@ class OrderManager:
     
     def place_limit_order(self, side: str, amount: float, price: float, reduce_only: bool = False) -> bool:
         """下限价单"""
+        if config.get('trading', 'test_mode'):
+            log_info(f"🧪 模拟限价单: {side} {amount} @ ${price} (reduce_only={reduce_only})")
+            return True
+            
         try:
             # 检查做空权限
             if side.upper() == 'SELL' and not reduce_only:
@@ -176,6 +184,10 @@ class OrderManager:
     def set_stop_loss_take_profit(self, position_side: str, stop_loss_price: float, 
                                  take_profit_price: float, position_size: float) -> bool:
         """智能止盈止损设置（先检查合理性，再决定是否更新）"""
+        if config.get('trading', 'test_mode'):
+            log_info(f"🧪 模拟设置止盈止损: {position_side} SL={stop_loss_price} TP={take_profit_price} SIZE={position_size}")
+            return True
+            
         try:
             # 参数验证
             if position_size <= 0:
@@ -925,6 +937,10 @@ class TradingEngine:
     def execute_trade_with_tp_sl(self, signal: str, amount: float, 
                                stop_loss_price: float, take_profit_price: float) -> bool:
         """执行带止盈止损的交易"""
+        if config.get('trading', 'test_mode'):
+            log_info(f"🧪 模拟交易: {signal} {amount} @ SL={stop_loss_price} TP={take_profit_price}")
+            return True
+            
         try:
             success = False
             
@@ -1008,6 +1024,10 @@ class TradingEngine:
         Returns:
             bool: 平仓是否成功
         """
+        if config.get('trading', 'test_mode'):
+            log_info(f"🧪 模拟平仓: {side} 方向 {amount} 张")
+            return True
+            
         try:
             # 平仓前再次验证持仓状态
             current_position = self.exchange_manager.get_position()

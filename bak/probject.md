@@ -16,6 +16,7 @@ alpha-arena-okx/
 ├── strategies.py         # 策略模块
 ├── utils.py              # 工具模块
 ├── run.py                # 启动脚本
+├── ai_client.py          # AI客户端
 └── README.md             # 项目文档
 ```
 

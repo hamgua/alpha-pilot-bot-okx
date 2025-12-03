@@ -9,3 +9,4 @@ streamlit
 plotly
 numpy
 aiohttp
+nest-asyncio

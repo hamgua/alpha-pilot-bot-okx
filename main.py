@@ -7,6 +7,7 @@ import time
 import threading
 import json
 import numpy as np
+import concurrent.futures
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
@@ -114,7 +115,29 @@ class AlphaArenaBot:
     
     def get_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """获取AI交易信号（增强版）"""
-        return asyncio.run(self._get_ai_signal_async(market_data))
+        try:
+            # 使用线程安全的方式运行异步函数
+            import threading
+            import nest_asyncio
+            
+            # 应用nest_asyncio以允许嵌套事件循环
+            try:
+                nest_asyncio.apply()
+            except:
+                pass  # 如果已应用则忽略
+            
+            # 使用线程池执行异步函数
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    lambda: asyncio.run(self._get_ai_signal_async(market_data))
+                )
+                return future.result(timeout=30)
+                
+        except Exception as e:
+            log_error(f"AI信号获取失败: {type(e).__name__}: {e}")
+            import traceback
+            log_error(f"AI信号获取堆栈:\n{traceback.format_exc()}")
+            return self._get_fallback_signal_sync(market_data)
     
     async def _get_ai_signal_async(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """异步获取AI交易信号"""
@@ -420,12 +443,23 @@ class AlphaArenaBot:
     
     async def _generate_multi_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """生成多AI融合信号"""
-        providers = ['deepseek', 'kimi']
+        # 从配置中获取AI_FUSION_PROVIDERS
+        fusion_providers_str = config.get('ai', 'ai_fusion_providers', 'deepseek,kimi')
+        providers = [p.strip() for p in fusion_providers_str.split(',')]
+        
+        # 过滤掉未配置的提供商（基于实际可用的API密钥）
+        available_providers = [p for p in providers if p in ai_client.providers]
+        
+        if not available_providers:
+            log_warning("没有可用的AI提供商，使用回退信号")
+            return await self._get_fallback_signal(market_data)
+        
+        log_info(f"使用AI提供商: {available_providers} (配置: {fusion_providers_str})")
         
         # 获取信号，设置超时
         try:
             signals = await asyncio.wait_for(
-                ai_client.get_multi_ai_signals(market_data, providers),
+                ai_client.get_multi_ai_signals(market_data, available_providers),
                 timeout=30.0
             )
             
@@ -449,11 +483,48 @@ class AlphaArenaBot:
     
     async def _generate_single_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """生成单AI信号"""
-        # 使用现有的简化版信号生成
-        return self._generate_ai_signal(market_data)
+        # 从配置中获取AI_PROVIDER
+        single_provider = config.get('ai', 'ai_provider', 'kimi')
+        
+        # 检查该提供商是否可用
+        if single_provider not in ai_client.providers:
+            log_warning(f"配置的AI提供商 {single_provider} 不可用，使用回退信号")
+            return await self._get_fallback_signal(market_data)
+        
+        log_info(f"使用单AI提供商: {single_provider}")
+        
+        try:
+            # 获取单AI信号
+            signal = await ai_client.get_ai_signal(market_data, single_provider)
+            if signal:
+                # 包装成标准格式
+                signal_data = {
+                    'signal': signal.signal,
+                    'confidence': signal.confidence,
+                    'reason': signal.reason,
+                    'timestamp': signal.timestamp,
+                    'provider': single_provider,
+                    'single_ai_mode': True
+                }
+                
+                # 保存AI信号到数据管理系统
+                self.data_manager.save_ai_signal(signal_data)
+                
+                return signal_data
+            else:
+                log_warning(f"单AI信号获取失败，使用回退信号")
+                return await self._get_fallback_signal(market_data)
+                
+        except Exception as e:
+            log_error(f"单AI信号生成失败: {e}")
+            return await self._get_fallback_signal(market_data)
     
     async def _get_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """获取回退信号（增强版）"""
+        return self._get_fallback_signal_sync(market_data)
+        
+    def _get_fallback_signal_sync(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """获取同步回退信号（增强版）"""
         # 检查是否有历史信号可用
         history = memory_manager.get_history('signals', limit=10)
         
@@ -694,6 +765,15 @@ class AlphaArenaBot:
                     log_info(f"💡 AI理由: {fusion_reason}")
                 else:
                     log_info(f"💡 AI理由: {signal_data.get('reason', '无')}")
+                
+                # 保存AI信号到历史记录（用于横盘检测）
+                memory_manager.add_to_history('signals', {
+                    'signal': signal_data.get('signal', 'HOLD'),
+                    'confidence': signal_data.get('confidence', 0.5),
+                    'timestamp': datetime.now().isoformat(),
+                    'reason': signal_data.get('reason', '')
+                })
+                
             except Exception as e:
                 log_error(f"获取AI信号失败: {e}")
                 return
@@ -723,6 +803,15 @@ class AlphaArenaBot:
             # 7. 检查横盘利润锁定
             try:
                 self._check_consolidation_profit_lock(market_data)
+                
+                # 记录横盘状态监控信息
+                consolidation_status = consolidation_detector.get_consolidation_status()
+                if consolidation_status['is_active']:
+                    log_info(f"📊 横盘状态监控：")
+                    log_info(f"   激活状态：{'✅ 已激活' if consolidation_status['is_active'] else '❌ 未激活'}")
+                    log_info(f"   持续时间：{consolidation_status['duration_minutes']:.1f}分钟")
+                    log_info(f"   部分平仓：{'✅ 已执行' if consolidation_status['partial_close_done'] else '❌ 未执行'}")
+                    
             except Exception as e:
                 log_error(f"检查横盘利润锁定失败: {e}")
             
@@ -890,30 +979,66 @@ class AlphaArenaBot:
         return False
     
     def _check_consolidation_profit_lock(self, market_data: Dict[str, Any]):
-        """检查横盘利润锁定"""
+        """检查横盘利润锁定 - 基于业务需求实现完整横盘处理逻辑"""
         position = market_data.get('position')
         
         if not position or position.get('size', 0) <= 0:
             return
         
         try:
+            # 获取价格历史数据
             price_history = self._get_price_history_for_analysis()
-            
             if not price_history:
                 return
+                
+            # 获取AI信号历史
+            ai_signal_history = self._get_ai_signal_history()
             
-            should_lock = consolidation_detector.should_lock_profit(position, market_data, price_history)
-            if should_lock:
-                # 执行利润锁定前再次验证持仓
-                current_position = trading_engine.get_position_info()
-                if current_position['has_position'] and current_position['side'] == position['side']:
-                    actual_size = min(position['size'], current_position['size'])
-                    if actual_size > 0:
-                        trading_engine.order_manager.cancel_all_tp_sl_orders()
-                        trading_engine.close_position(position['side'], actual_size)
+            # 检测横盘状态
+            consolidation_result = consolidation_detector.detect_consolidation(
+                market_data, ai_signal_history, position, price_history.get('close', [])
+            )
+            
+            if consolidation_result['is_consolidation']:
+                log_info(f"📊 检测到横盘行情：{consolidation_result['reason']}")
+                log_info(f"   价格波动：{consolidation_result['price_range_pct']:.2%}")
+                log_info(f"   持续时间：{consolidation_result['consolidation_duration']:.1f}分钟")
+                
+                # 执行横盘处理动作
+                action = consolidation_result['action']
+                if action:
+                    from trading_extensions import TradingExtensions
+                    trading_ext = TradingExtensions(trading_engine)
+                    
+                    success = consolidation_detector.execute_consolidation_action(
+                        action, position, trading_ext
+                    )
+                    
+                    if success:
+                        log_info(f"✅ 横盘处理动作执行成功：{action}")
+                    else:
+                        log_error(f"❌ 横盘处理动作执行失败：{action}")
+                        
+            else:
+                # 检查是否应该退出横盘状态
+                if consolidation_detector.should_exit_consolidation(
+                    ai_signal_history, market_data
+                ):
+                    consolidation_detector.reset_consolidation_state()
+                    log_info("🔄 退出横盘状态")
                 
         except Exception as e:
             log_error(f"检查横盘利润锁定异常: {e}")
+    
+    def _get_ai_signal_history(self) -> list[str]:
+        """获取AI信号历史"""
+        try:
+            # 从内存管理器获取最近的AI信号
+            signal_history = memory_manager.get_history('signals', limit=10)
+            return [sig.get('signal', 'HOLD') for sig in signal_history]
+        except Exception as e:
+            log_error(f"获取AI信号历史失败: {e}")
+            return []
     
     def _save_trade_record(self, signal: str, market_data: Dict[str, Any], 
                           signal_data: Dict[str, Any], order_size: float):
@@ -1102,7 +1227,9 @@ class AlphaArenaBot:
                     next_run_time = datetime.now() + timedelta(seconds=wait_seconds)
                     
                     log_info(f"⏰ 下次执行时间: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                    log_info(f"⏰ 等待 {int(wait_seconds)} 秒...")
+                    minutes = int(wait_seconds // 60)
+                    seconds = int(wait_seconds % 60)
+                    log_info(f"⏰ 等待 {minutes}分{seconds}秒 到下一个15分钟整点执行...")
                     
                     time.sleep(wait_seconds)
                     

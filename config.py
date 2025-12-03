@@ -27,142 +27,178 @@ class ConfigManager:
         }
     
     def _load_exchange_config(self) -> Dict[str, Any]:
-        """交易所配置"""
+        """交易所配置 - 连接OKX交易所的核心参数"""
         return {
-            'exchange': 'okx',
-            'api_key': os.getenv('OKX_API_KEY'),
-            'secret': os.getenv('OKX_SECRET'),
-            'password': os.getenv('OKX_PASSWORD'),
-            'sandbox': os.getenv('OKX_SANDBOX', 'false').lower() == 'true',
-            'symbol': 'BTC/USDT:USDT',
-            'timeframe': '5m',
-            'contract_size': 0.01
+            'exchange': 'okx',  # 交易所名称，固定为okx
+            'api_key': os.getenv('OKX_API_KEY'),  # OKX API密钥 - 用于身份验证
+            'secret': os.getenv('OKX_SECRET'),  # OKX密钥 - 用于签名请求
+            'password': os.getenv('OKX_PASSWORD'),  # OKX交易密码 - 用于资金操作
+            'sandbox': os.getenv('OKX_SANDBOX', 'false').lower() == 'true',  # 沙盒模式 - true为测试环境，false为真实交易
+            'symbol': 'BTC/USDT:USDT',  # 交易对 - BTC永续合约
+            'timeframe': '5m',  # K线周期 - 5分钟K线（可改为1m,15m,1h等）
+            'contract_size': 0.01  # 合约乘数 - 每份合约代表0.01个BTC
         }
     
     def _load_trading_config(self) -> Dict[str, Any]:
-        """交易配置"""
+        """交易配置 - 控制交易行为和风险参数"""
         return {
-            'test_mode': os.getenv('TEST_MODE', 'true').lower() == 'true',
-            'max_position_size': float(os.getenv('MAX_POSITION_SIZE', '0.01')),
-            'min_trade_amount': float(os.getenv('MIN_TRADE_AMOUNT', '0.001')),
-            'leverage': int(os.getenv('LEVERAGE', '10')),
-            'cycle_minutes': int(os.getenv('CYCLE_MINUTES', '15')),
-            'margin_mode': 'cross',
-            'position_mode': 'one_way',
-            'allow_short_selling': os.getenv('ALLOW_SHORT_SELLING', 'false').lower() == 'true'
+            'test_mode': os.getenv('TEST_MODE', 'true').lower() == 'true',  # 测试模式 - true为模拟交易，false为真实交易
+            'max_position_size': float(os.getenv('MAX_POSITION_SIZE', '0.01')),  # 最大持仓量 - 最多持有的BTC数量
+            'min_trade_amount': float(os.getenv('MIN_TRADE_AMOUNT', '0.001')),  # 最小交易量 - 每次交易的最小BTC数量
+            'leverage': int(os.getenv('LEVERAGE', '10')),  # 杠杆倍数 - 10倍杠杆（谨慎调整）
+            'cycle_minutes': int(os.getenv('CYCLE_MINUTES', '15')),  # 交易周期 - 每15分钟执行一次交易检查
+            'margin_mode': 'cross',  # 保证金模式 - cross为全仓，isolated为逐仓
+            'position_mode': 'one_way',  # 持仓模式 - one_way为单向持仓，hedge为双向持仓
+            'allow_short_selling': os.getenv('ALLOW_SHORT_SELLING', 'false').lower() == 'true'  # 允许做空 - true可开空仓，false只能做多
         }
     
     def _load_strategy_config(self) -> Dict[str, Any]:
-        """策略配置"""
+        """策略配置 - 各种智能交易策略的参数设置"""
         return {
             'profit_lock_strategy': {
-                'enabled': True,
-                'min_profit_pct': 0.01,
-                'consolidation_threshold': 0.01,
-                'lookback_periods': 24,  # 修改为24根K线（2小时）
-                'consolidation_duration': 120,  # 修改为120分钟（2小时）
-                'only_long_positions': True,
-                'volatility_adaptive': True,
-                'min_volume_threshold': 1000,
-                'max_consecutive_periods': 8,
-                'breakout_threshold': 0.012,
-                'time_decay_factor': 0.95,
-                'volume_weight': 0.3
+                'enabled': True,  # 利润锁定策略开关 - true启用横盘利润保护
+                'consolidation_threshold': 0.01,  # 横盘识别阈值 - 价格波动小于1%视为横盘
+                'lookback_periods': 24,  # 回看周期数 - 24根K线（2小时）用于识别横盘
+                'consolidation_duration': 120,  # 横盘持续时间 - 120分钟（2小时）确认横盘
+                'min_volume_threshold': 1000,  # 最小成交量 - 低于1000不触发横盘保护
+                'max_consecutive_periods': 8,  # 最大连续周期 - 横盘超过8个周期强制止盈
+                'breakout_threshold': 0.012,  # 突破阈值 - 价格波动超过1.2%视为突破横盘
+                'min_profit_pct': 0.005,  # 最小盈利比例 - 盈利超过0.5%才触发横盘保护
+                'volatility_adaptive': True,  # 波动率自适应 - 根据市场波动调整阈值
+                'time_decay_factor': 0.95,  # 时间衰减因子 - 横盘时间越长，止盈越激进
+                'only_long_positions': True,  # 仅处理多头 - true只处理多头持仓的横盘保护
+                'usdt_threshold': 100,  # USDT阈值 - 多头仓位价值≥100USDT执行部分平仓，<100USDT全部平仓
+                'partial_close_ratio': 0.5,  # 部分平仓比例 - 首次平仓50%
+                'trailing_stop_pct': 0.008,  # 跟踪止损比例 - 0.8%跟踪止损
+                'duration_check_minutes': 30,  # 持续性检查时间 - 30分钟后再次平仓25%
+                'additional_close_ratio': 0.25,  # 持续横盘后的额外平仓比例 - 再平仓25%
+                'cancel_tp_orders': True,  # 取消止盈订单 - 横盘触发后取消所有TP订单
+                'keep_sl_orders': True,  # 保留止损订单 - 横盘触发后保留SL订单
+            },
+            'sell_signal_strategy': {
+                'enabled': True,  # SELL信号策略开关 - true启用SELL信号平仓逻辑
+                'consecutive_sell_count': 2,  # 连续SELL信号次数 - 需要连续2次SELL才执行平仓
+                'ma_period': 15,  # 均线周期 - 15分钟均线用于趋势确认
+                'price_break_ma_threshold': 0.001,  # 价格跌破均线阈值 - 价格跌破均线0.1%视为确认
+                'min_profit_threshold': 0.0,  # 最小盈利阈值 - 浮盈≥0时允许平仓
+                'reverse_offset_threshold': 0.005,  # 反向偏移阈值 - 价格距离开仓价反向偏移≥0.5%视为确认
+                'close_full_position': True,  # 全部平仓 - true时平掉100%多头仓位
+                'cancel_all_pending_orders': True,  # 取消所有挂单 - true时取消全部未成交委托单
+                'log_sell_reason': True,  # 记录卖出原因 - true时记录详细的卖出原因用于AI调优
+            },
+            'buy_signal_strategy': {
+                'enabled': True,  # BUY信号策略开关 - true启用BUY信号入仓逻辑
+                'allow_rebuy': False,  # 允许补仓 - false时不允许在已有持仓时补仓
+                'price_update_threshold': 0.005,  # 价格更新阈值 - 新TP/SL价格与现有订单差距≥0.5%才更新
+                'clear_consolidation_on_buy': True,  # 清除横盘计数 - BUY信号出现时清除横盘相关计数
+                'prevent_high_frequency_updates': True,  # 防止高频更新 - 避免频繁更新止盈止损订单
+                'max_update_frequency_minutes': 15,  # 最大更新频率 - 5分钟内最多更新一次止盈止损
+            },
+            'consolidation_protection': {
+                'enabled': True,  # 横盘保护开关 - true启用横盘利润锁定
+                'consecutive_hold_required': 4,  # 连续HOLD信号次数 - 需要连续4次HOLD才触发横盘检查
+                'consolidation_threshold': 0.01,  # 横盘阈值 - 2小时内价格波动<1%视为横盘
+                'lookback_hours': 2,  # 回顾时间 - 检查最近2小时的价格波动
+                'cancel_all_pending_orders': True,  # 取消所有挂单 - 触发横盘平仓时取消所有未成交订单
+                'log_consolidation_reason': True,  # 记录横盘原因 - true时记录详细的横盘触发原因
             },
             'smart_tp_sl': {
-                'enabled': True,
-                'base_sl_pct': 0.02,
-                'base_tp_pct': 0.06,
-                'adaptive_mode': True,
-                'high_vol_multiplier': 1.5,
-                'low_vol_multiplier': 0.8,
-                'trend_strength_weight': 0.4,
-                'volume_weight': 0.3,
-                'time_weight': 0.2,
-                'confidence_weight': 0.1,
-                'max_sl_pct': 0.05,
-                'max_tp_pct': 0.15,
-                'min_sl_pct': 0.01,
-                'min_tp_pct': 0.03
+                'enabled': True,  # 智能止盈止损开关 - true启用动态调整
+                'base_sl_pct': 0.02,  # 基础止损比例 - 默认2%止损
+                'base_tp_pct': 0.06,  # 基础止盈比例 - 默认6%止盈
+                'adaptive_mode': True,  # 自适应模式 - 根据市场条件调整止损止盈
+                'high_vol_multiplier': 1.5,  # 高波动率倍数 - 波动率高时扩大1.5倍
+                'low_vol_multiplier': 0.8,  # 低波动率倍数 - 波动率低时缩小0.8倍
+                'trend_strength_weight': 0.4,  # 趋势强度权重 - 趋势在调整中的权重40%
+                'volume_weight': 0.3,  # 成交量权重 - 成交量在调整中的权重30%
+                'time_weight': 0.2,  # 时间权重 - 持仓时间在调整中的权重20%
+                'confidence_weight': 0.1,  # 信心权重 - AI信心在调整中的权重10%
+                'max_sl_pct': 0.05,  # 最大止损比例 - 止损不超过5%
+                'max_tp_pct': 0.15,  # 最大止盈比例 - 止盈不超过15%
+                'min_sl_pct': 0.01,  # 最小止损比例 - 止损不低于1%
+                'min_tp_pct': 0.03  # 最小止盈比例 - 止盈不低于3%
             },
             'limit_order': {
-                'enabled': os.getenv('LIMIT_ORDER_ENABLED', 'true').lower() == 'true',
-                'maker_ratio': 0.5,
-                'confidence_threshold': 0.8,
-                'price_buffer': 0.001,
-                'timeout': 30,
-                'retry_limit': 3
+                'enabled': os.getenv('LIMIT_ORDER_ENABLED', 'true').lower() == 'true',  # 限价单开关 - true启用限价单，false只用市价单
+                'maker_ratio': 0.5,  # 做市比例 - 50%概率使用限价单
+                'confidence_threshold': 0.8,  # 信心阈值 - AI信心高于80%才使用限价单
+                'price_buffer': 0.001,  # 价格缓冲 - 限价单价格偏移0.1%
+                'timeout': 30,  # 超时时间 - 限价单30秒未成交转为市价单
+                'retry_limit': 3  # 重试次数 - 限价单最多重试3次
             },
             'price_crash_protection': {
-                'enabled': True,
-                'crash_threshold_critical': 0.05,
-                'crash_threshold_high': 0.03,
-                'crash_threshold_medium': 0.02,
-                'crash_threshold_low': 0.01,
-                'volume_spike_threshold': 3.0,
-                'volatility_spike_threshold': 2.5,
-                'orderbook_imbalance_threshold': 0.7,
-                'cascade_risk_threshold': 0.8,
-                'action_delay': 5,
-                'cooldown_period': 300,
-                'immediate_close_threshold': 0.08,
-                'tighten_stop_threshold': 0.04,
-                'enhanced_monitor_threshold': 0.02,
-                'stop_sl_update_on_crash': True
+                'enabled': True,  # 暴跌保护开关 - true启用价格暴跌保护机制
+                'crash_threshold_critical': 0.05,  # 暴跌阈值-严重 - 5%暴跌触发紧急保护
+                'crash_threshold_high': 0.03,  # 暴跌阈值-高 - 3%暴跌触发高级保护
+                'crash_threshold_medium': 0.02,  # 暴跌阈值-中 - 2%暴跌触发中级保护
+                'crash_threshold_low': 0.01,  # 暴跌阈值-低 - 1%暴跌触发低级保护
+                'volume_spike_threshold': 3.0,  # 成交量激增阈值 - 成交量突增3倍触发监控
+                'volatility_spike_threshold': 2.5,  # 波动率激增阈值 - 波动率突增2.5倍触发监控
+                'orderbook_imbalance_threshold': 0.7,  # 订单簿失衡阈值 - 买卖盘比例超过70%触发监控
+                'cascade_risk_threshold': 0.8,  # 连锁风险阈值 - 风险系数超过0.8触发保护
+                'action_delay': 5,  # 行动延迟 - 检测到暴跌后5秒执行保护动作
+                'cooldown_period': 300,  # 冷却期 - 暴跌保护触发后300秒内不再重复触发
+                'immediate_close_threshold': 0.08,  # 立即平仓阈值 - 8%暴跌立即平仓所有仓位
+                'tighten_stop_threshold': 0.04,  # 收紧止损阈值 - 4%暴跌收紧止损位
+                'enhanced_monitor_threshold': 0.02,  # 增强监控阈值 - 2%暴跌进入增强监控模式
+                'stop_sl_update_on_crash': True  # 暴跌时停止止损更新 - 防止止损被触发
             }
         }
     
     def _load_risk_config(self) -> Dict[str, Any]:
-        """风险控制配置"""
+        """风险控制配置 - 管理整体风险暴露"""
         return {
-            'max_daily_loss': float(os.getenv('MAX_DAILY_LOSS', '100')),
-            'max_position_risk': float(os.getenv('MAX_POSITION_RISK', '0.05')),
-            'stop_loss_enabled': True,
-            'take_profit_enabled': True,
+            'max_daily_loss': float(os.getenv('MAX_DAILY_LOSS', '100')),  # 最大日亏损 - 每日最多亏损100 USDT
+            'max_position_risk': float(os.getenv('MAX_POSITION_RISK', '0.05')),  # 最大仓位风险 - 单笔交易风险不超过5%
+            'stop_loss_enabled': True,  # 止损开关 - true启用自动止损
+            'take_profit_enabled': True,  # 止盈开关 - true启用自动止盈
             'trailing_stop': {
-                'enabled': True,
-                'breakeven_at': 0.01,
-                'lock_profit_at': 0.03,
-                'trailing_distance': 0.015
+                'enabled': True,  # 追踪止损开关 - true启用移动止损
+                'breakeven_at': 0.01,  # 保本触发点 - 盈利1%时将止损移至成本价
+                'lock_profit_at': 0.03,  # 利润锁定点 - 盈利3%时锁定部分利润
+                'trailing_distance': 0.015  # 追踪距离 - 止损价距离最高价1.5%
             }
         }
     
     def _load_ai_config(self) -> Dict[str, Any]:
-        """AI配置"""
+        """AI配置 - 人工智能信号生成相关设置"""
         return {
-            'use_multi_ai': os.getenv('USE_MULTI_AI', 'false').lower() == 'true',
-            'cache_duration': int(os.getenv('AI_CACHE_DURATION', '900')),
-            'timeout': int(os.getenv('AI_TIMEOUT', '30')),
-            'max_retries': int(os.getenv('AI_MAX_RETRIES', '2')),
-            'min_confidence_threshold': float(os.getenv('AI_MIN_CONFIDENCE', '0.5')),
+            'use_multi_ai': os.getenv('USE_MULTI_AI', 'false').lower() == 'true',  # 多AI模式 - true使用多个AI模型融合信号
+            'cache_duration': int(os.getenv('AI_CACHE_DURATION', '900')),  # 缓存时长 - AI信号缓存15分钟（900秒）
+            'timeout': int(os.getenv('AI_TIMEOUT', '30')),  # AI超时时间 - 等待AI回复最多30秒
+            'max_retries': int(os.getenv('AI_MAX_RETRIES', '2')),  # 最大重试次数 - AI调用失败最多重试2次
+            'min_confidence_threshold': float(os.getenv('AI_MIN_CONFIDENCE', '0.5')),  # 最低信心阈值 - AI信心低于50%不执行交易
+            'ai_provider': os.getenv('AI_PROVIDER', 'kimi'),  # 单AI模式提供商 - 当USE_MULTI_AI=false时使用
+            'ai_fusion_providers': os.getenv('AI_FUSION_PROVIDERS', 'deepseek,kimi'),  # 多AI融合提供商 - 当USE_MULTI_AI=true时使用
             'models': {
-                'kimi': os.getenv('KIMI_API_KEY'),
-                'deepseek': os.getenv('DEEPSEEK_API_KEY'),
-                'openai': os.getenv('OPENAI_API_KEY')
+                'kimi': os.getenv('KIMI_API_KEY'),  # Kimi API密钥 - 月之暗面AI模型
+                'deepseek': os.getenv('DEEPSEEK_API_KEY'),  # DeepSeek API密钥 - 深度求索AI模型
+                'qwen': os.getenv('QWEN_API_KEY'),  # Qwen API密钥 - 通义千问模型
+                'openai': os.getenv('OPENAI_API_KEY')  # OpenAI API密钥 - ChatGPT模型
             },
-            'fallback_enabled': os.getenv('AI_FALLBACK_ENABLED', 'true').lower() == 'true',
-            'similarity_threshold': float(os.getenv('AI_SIMILARITY_THRESHOLD', '0.8')),
+            'fallback_enabled': os.getenv('AI_FALLBACK_ENABLED', 'true').lower() == 'true',  # 回退机制 - true在AI失败时使用回退策略
+            'similarity_threshold': float(os.getenv('AI_SIMILARITY_THRESHOLD', '0.8')),  # 相似度阈值 - 历史信号相似度高于80%使用缓存
             'cache_levels': {
-                'memory': True,
-                'price_bucket': True,
-                'pattern': True
+                'memory': True,  # 内存缓存 - 在内存中缓存信号
+                'price_bucket': True,  # 价格区间缓存 - 按价格区间缓存信号
+                'pattern': True  # 模式缓存 - 按市场模式缓存信号
             }
         }
     
     def _load_system_config(self) -> Dict[str, Any]:
-        """系统配置"""
+        """系统配置 - 系统运行和监控相关设置"""
         return {
-            'max_history_length': 100,
-            'log_level': os.getenv('LOG_LEVEL', 'INFO'),
-            'monitoring_enabled': True,
-            'memory_cleanup_interval': 3600,
-            'heartbeat_interval': 60,
+            'max_history_length': 100,  # 最大历史长度 - 保留最近100条历史记录
+            'log_level': os.getenv('LOG_LEVEL', 'INFO'),  # 日志级别 - DEBUG/INFO/WARNING/ERROR
+            'monitoring_enabled': True,  # 监控开关 - true启用系统监控
+            'memory_cleanup_interval': 3600,  # 内存清理间隔 - 每小时清理一次内存
+            'heartbeat_interval': 60,  # 心跳间隔 - 每60秒发送一次心跳信号
             'web_interface': {
-                'enabled': os.getenv('WEB_ENABLED', 'false').lower() == 'true',
-                'port': int(os.getenv('WEB_PORT', '8501'))
+                'enabled': os.getenv('WEB_ENABLED', 'false').lower() == 'true',  # Web界面开关 - true启用Streamlit监控界面
+                'port': int(os.getenv('WEB_PORT', '8501'))  # Web端口 - Streamlit监控界面端口8501
             },
             'version_preference': {
-                'prefer_new_version': os.getenv('USE_NEW_VERSION', 'true').lower() == 'true'
+                'prefer_new_version': os.getenv('USE_NEW_VERSION', 'true').lower() == 'true'  # 版本偏好 - true优先使用新版本
             }
         }
     

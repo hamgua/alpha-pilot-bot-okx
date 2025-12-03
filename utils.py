@@ -13,9 +13,20 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 
 # 日志函数将在使用时动态创建
-log_info = lambda *args, **kwargs: print(*args)
-log_warning = lambda *args, **kwargs: print("WARNING:", *args)
-log_error = lambda *args, **kwargs: print("ERROR:", *args)
+def log_info(*args, **kwargs):
+    """输出信息日志，包含毫秒时间戳"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
+    print(f"{timestamp} [INFO]", *args, **kwargs)
+
+def log_warning(*args, **kwargs):
+    """输出警告日志，包含毫秒时间戳"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
+    print(f"{timestamp} [WARNING]", *args, **kwargs)
+
+def log_error(*args, **kwargs):
+    """输出错误日志，包含毫秒时间戳"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
+    print(f"{timestamp} [ERROR]", *args, **kwargs)
 
 @dataclass
 class CacheItem:
