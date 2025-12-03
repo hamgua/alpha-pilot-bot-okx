@@ -33,7 +33,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler(f'logs/alpha_arena-{datetime.now().strftime("%Y%m%d")}.log'),
+        logging.FileHandler(f'logs/alpha-pilot-bot-okx-{datetime.now().strftime("%Y%m%d")}.log'),
         logging.StreamHandler()
     ]
 )
