@@ -13,10 +13,7 @@ import concurrent.futures
 from dataclasses import dataclass
 
 from config import config
-import logging
-log_info = logging.getLogger('alpha_arena').info
-log_error = logging.getLogger('alpha_arena').error
-log_warning = logging.getLogger('alpha_arena').warning
+from utils import log_info, log_warning, log_error
 
 @dataclass
 class AISignal:
@@ -291,7 +288,8 @@ class AIClient:
                     if signal:
                         signals.append(signal)
                         log_info(f"🤖 {provider.upper()}回复: {signal.signal} (信心: {signal.confidence:.1f})")
-                        log_info(f"📋 {provider.upper()}理由: {signal.reason[:100]}...")
+                        clean_reason = ' '.join(signal.reason.replace('\n', ' ').replace('\r', ' ').split())
+                        log_info(f"📋 {provider.upper()}理由: {clean_reason[:100]}...")
                         break
                     else:
                         if attempt < max_retries:

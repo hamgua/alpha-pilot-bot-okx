@@ -12,21 +12,20 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
-# 日志函数将在使用时动态创建
-def log_info(*args, **kwargs):
-    """输出信息日志，包含毫秒时间戳"""
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
-    print(f"{timestamp} [INFO]", *args, **kwargs)
+def log_info(message):
+    """输出信息日志，统一格式"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{timestamp}] [INFO] {message}")
 
-def log_warning(*args, **kwargs):
-    """输出警告日志，包含毫秒时间戳"""
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
-    print(f"{timestamp} [WARNING]", *args, **kwargs)
+def log_warning(message):
+    """输出警告日志，统一格式"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{timestamp}] [WARNING] {message}")
 
-def log_error(*args, **kwargs):
-    """输出错误日志，包含毫秒时间戳"""
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
-    print(f"{timestamp} [ERROR]", *args, **kwargs)
+def log_error(message):
+    """输出错误日志，统一格式"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{timestamp}] [ERROR] {message}")
 
 @dataclass
 class CacheItem:
@@ -235,42 +234,7 @@ class JSONHelper:
             return str(obj)
 
 # 整合日志和数据管理功能
-class LoggerConfig:
-    """日志配置 - 整合logger_config.py功能"""
-    
-    def __init__(self, name="alpha_arena", log_level=logging.INFO):
-        self.name = name
-        self.log_level = log_level
-        self._setup_logger()
-    
-    def _setup_logger(self):
-        """设置日志器"""
-        import logging
-        from pathlib import Path
-        
-        LOG_DIR = Path(__file__).parent / "logs"
-        LOG_DIR.mkdir(exist_ok=True)
-        
-        logger = logging.getLogger(self.name)
-        logger.setLevel(self.log_level)
-        
-        # 文件处理器
-        from datetime import datetime
-        log_file = LOG_DIR / f"{self.name}-{datetime.now().strftime('%Y%m%d')}.log"
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setFormatter(
-            logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-        )
-        
-        # 控制台处理器
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(
-            logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-        )
-        
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-        return logger
+# LoggerConfig类已移除，统一使用项目级日志配置
 
 class TradeLogger:
     """交易日志管理 - 整合trade_logger.py功能"""
@@ -298,7 +262,7 @@ class TradeLogger:
             with open(self.trade_log_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
         except Exception as e:
-            print(f"记录AI决策失败: {e}")
+            log_error(f"记录AI决策失败: {e}")
 
 class DataManager:
     """数据管理 - 整合数据管理功能"""
@@ -319,7 +283,7 @@ class DataManager:
                 import json
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"保存交易数据失败: {e}")
+            log_error(f"保存交易数据失败: {e}")
     
     def load_trading_data(self):
         """加载交易数据"""
@@ -329,7 +293,7 @@ class DataManager:
                 with open(self.data_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            print(f"加载交易数据失败: {e}")
+            log_error(f"加载交易数据失败: {e}")
             return {}
     
     def save_market_data(self, data):
@@ -357,7 +321,7 @@ class DataManager:
             return summary
             
         except Exception as e:
-            print(f"获取数据摘要失败: {e}")
+            log_error(f"获取数据摘要失败: {e}")
             return {'trading_data': {'total_records': 0, 'last_update': '错误'}, 
                    'market_data': {'total_records': 0, 'last_update': '错误'}}
     
@@ -1342,6 +1306,60 @@ logger_helper = LoggerHelper()
 error_recovery = ErrorRecoveryManager()
 recovery_engine = RecoveryEngine()
 
+def load_trading_data_from_file(file_path: str = None) -> Dict[str, Any]:
+    """从文件加载交易数据（供streamlit使用）"""
+    try:
+        from pathlib import Path
+        import json
+        
+        if file_path is None:
+            data_dir = Path(__file__).parent / "data_json"
+            file_path = data_dir / "trading_data.json"
+        
+        if Path(file_path).exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        else:
+            return {
+                "status": "stopped",
+                "last_update": "N/A",
+                "account": {"balance": 0, "equity": 0, "leverage": 0},
+                "btc": {"price": 0, "change": 0, "timeframe": "1h", "mode": "全仓-单向"},
+                "position": None,
+                "performance": {"total_pnl": 0, "win_rate": 0, "total_trades": 0},
+                "ai_signal": {
+                    "signal": "HOLD",
+                    "confidence": "N/A",
+                    "reason": "等待交易程序启动...",
+                    "stop_loss": 0,
+                    "take_profit": 0,
+                    "timestamp": "N/A"
+                },
+                "file_not_found": True
+            }
+    except Exception as e:
+        log_error(f"加载交易数据失败: {e}")
+        return {}
+
+def load_trades_history_from_file(file_path: str = None) -> List[Dict[str, Any]]:
+    """从文件加载交易历史（供streamlit使用）"""
+    try:
+        from pathlib import Path
+        import json
+        
+        if file_path is None:
+            data_dir = Path(__file__).parent / "data_json"
+            file_path = data_dir / "trades_history.json"
+        
+        if Path(file_path).exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        else:
+            return []
+    except Exception as e:
+        log_error(f"加载交易历史失败: {e}")
+        return []
+
 def save_trade_record(trade_record: Dict[str, Any]) -> bool:
     """保存交易记录到文件"""
     try:
@@ -1378,7 +1396,7 @@ def save_trade_record(trade_record: Dict[str, Any]) -> bool:
         return True
         
     except Exception as e:
-        print(f"保存交易记录失败: {e}")
+        log_error(f"保存交易记录失败: {e}")
         return False
 state_persistence = StatePersistence()
 recovery_engine = RecoveryEngine()

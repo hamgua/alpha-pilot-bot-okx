@@ -7,13 +7,9 @@ import ccxt
 import time
 import json
 from typing import Dict, Any, Optional, Tuple, List
-from datetime import datetime
-
 from config import config
-import logging
-log_info = logging.getLogger('alpha_arena').info
-log_warning = logging.getLogger('alpha_arena').warning
-log_error = logging.getLogger('alpha_arena').error
+from datetime import datetime
+from utils import log_info, log_warning, log_error
 
 class ExchangeManager:
     """交易所管理器"""

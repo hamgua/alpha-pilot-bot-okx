@@ -16,30 +16,20 @@ import logging
 from config import config
 from trading import trading_engine
 from strategies import (
-    market_analyzer, risk_manager, signal_processor, 
-    consolidation_detector, crash_protection, EnhancedSignalProcessor
+    MarketAnalyzer, StrategySelector, StrategyBacktestEngine, 
+    StrategyOptimizer, StrategyMonitor, StrategyExecutor, EnhancedSignalProcessor
 )
 from utils import (
     cache_manager, memory_manager, system_monitor, 
     data_validator, json_helper, time_helper, logger_helper,
-    LoggerConfig, TradeLogger, DataManager, save_trade_record
+    TradeLogger, DataManager, save_trade_record
 )
 from ai_client import ai_client
 # signal_executor模块已整合到strategies.py中
 import asyncio
 
-# 设置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(f'logs/alpha-pilot-bot-okx-{datetime.now().strftime("%Y%m%d")}.log'),
-        logging.StreamHandler()
-    ]
-)
-log_info = logging.getLogger('alpha_arena').info
-log_warning = logging.getLogger('alpha_arena').warning
-log_error = logging.getLogger('alpha_arena').error
+# 从utils导入统一的日志函数
+from utils import log_info, log_warning, log_error
 
 class AlphaArenaBot:
     """Alpha Arena OKX 交易机器人主类"""
@@ -662,7 +652,7 @@ class AlphaArenaBot:
             self.current_cycle += 1
             log_info(f"{'='*60}")
             log_info(f"🔄 第 {self.current_cycle} 轮交易周期开始")
-            log_info(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            log_info(f"⏰ 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             log_info(f"{'='*60}")
             
             # 1. 获取市场数据
@@ -762,9 +752,12 @@ class AlphaArenaBot:
                 # 使用多AI融合的详细理由
                 fusion_reason = signal_data.get('fusion_analysis', {}).get('fusion_reason', '')
                 if fusion_reason:
-                    log_info(f"💡 AI理由: {fusion_reason}")
+                    # 合并理由到一行，移除所有换行符和多余空格
+                    clean_reason = ' '.join(fusion_reason.replace('\n', ' ').replace('\r', ' ').split())
+                    log_info(f"💡 AI理由: {clean_reason}")
                 else:
-                    log_info(f"💡 AI理由: {signal_data.get('reason', '无')}")
+                    clean_reason = ' '.join(signal_data.get('reason', '无').replace('\n', ' ').replace('\r', ' ').split())
+                    log_info(f"💡 AI理由: {clean_reason}")
                 
                 # 保存AI信号到历史记录（用于横盘检测）
                 memory_manager.add_to_history('signals', {

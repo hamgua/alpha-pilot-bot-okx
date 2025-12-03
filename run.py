@@ -29,7 +29,7 @@ try:
     WEB_ENABLED = WEB_CONFIG.get('enabled', False)
     WEB_PORT = WEB_CONFIG.get('port', 8501)
 except Exception as e:
-    print(f"⚠️  读取配置失败，使用默认配置: {e}")
+    log(f"⚠️  读取配置失败，使用默认配置: {e}")
     WEB_ENABLED = False
     WEB_PORT = 8501
 
@@ -43,10 +43,7 @@ if WEB_ENABLED:
 # 全局进程列表
 processes = []
 
-def log(message):
-    """统一日志输出"""
-    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{timestamp}] {message}", flush=True)
+from utils import log_info as log
 
 def run_trading_bot():
     """运行交易程序（重构版）"""
@@ -269,10 +266,10 @@ def detect_version_preference():
 def main():
     """主函数"""
     # 打印启动信息
-    print("=" * 60)
-    print("🤖 Alpha Arena OKX - 重构版统一启动程序")
-    print("=" * 60)
-    print()
+    log("=" * 60)
+    log("🤖 Alpha Arena OKX - 重构版统一启动程序")
+    log("=" * 60)
+    log("")
     
     # 检查环境
     check_environment()
@@ -318,26 +315,26 @@ def main():
     
     if WEB_ENABLED:
         log("✅ 交易程序 + Web界面已启动")
-        print()
-        print("=" * 60)
-        print("📊 服务信息")
-        print("=" * 60)
-        print("🤖 交易程序: 运行中")
-        print(f"🌐 Web监控界面: http://localhost:{WEB_PORT}")
-        print("=" * 60)
+        log("")
+        log("=" * 60)
+        log("📊 服务信息")
+        log("=" * 60)
+        log("🤖 交易程序: 运行中")
+        log(f"🌐 Web监控界面: http://localhost:{WEB_PORT}")
+        log("=" * 60)
     else:
         log("✅ 交易程序已启动")
-        print()
-        print("=" * 60)
-        print("📊 服务信息")
-        print("=" * 60)
-        print("🤖 交易程序: 运行中")
+        log("")
+        log("=" * 60)
+        log("📊 服务信息")
+        log("=" * 60)
+        log("🤖 交易程序: 运行中")
         if not WEB_ENABLED:
-            print("🌐 Web界面: 已禁用")
-        print("=" * 60)
-    print()
+            log("🌐 Web界面: 已禁用")
+        log("=" * 60)
+    log("")
     log("💡 按 Ctrl+C 停止所有服务")
-    print()
+    log("")
     
     # 监控进程状态
     try:

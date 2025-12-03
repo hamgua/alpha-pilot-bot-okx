@@ -241,69 +241,35 @@ import os
 data_dir = "/app/data_json"
 os.makedirs(data_dir, exist_ok=True)
 
+from utils import load_trading_data_from_file, load_trades_history_from_file
+
 DATA_FILE = os.path.join(data_dir, "trading_data.json")
 TRADES_FILE = os.path.join(data_dir, "trades_history.json")
 
 def load_trading_data():
-    """加载交易数据"""
+    """加载交易数据（使用utils中的统一函数）"""
     try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                # 确保数据完整性
-                if 'last_update' in data:
-                    # 检查数据是否过期（超过30分钟）
-                    try:
-                        last_update = datetime.strptime(data['last_update'], '%Y-%m-%d %H:%M:%S')
-                        time_diff = (datetime.now() - last_update).total_seconds() / 60
-                        if time_diff > 30:
-                            data['status'] = 'warning'
-                    except:
-                        pass
-                return data
-        else:
-            return {
-                "status": "stopped",
-                "last_update": "N/A",
-                "account": {
-                    "balance": 0,
-                    "equity": 0,
-                    "leverage": 0
-                },
-                "btc": {
-                    "price": 0,
-                    "change": 0,
-                    "timeframe": "1h",
-                    "mode": "全仓-单向"
-                },
-                "position": None,
-                "performance": {
-                    "total_pnl": 0,
-                    "win_rate": 0,
-                    "total_trades": 0
-                },
-                "ai_signal": {
-                    "signal": "HOLD",
-                    "confidence": "N/A",
-                    "reason": "等待交易程序启动...",
-                    "stop_loss": 0,
-                    "take_profit": 0,
-                    "timestamp": "N/A"
-                },
-                "file_not_found": True
-            }
+        data = load_trading_data_from_file(DATA_FILE)
+        
+        # 处理数据完整性检查
+        if 'last_update' in data and data['last_update'] != 'N/A':
+            try:
+                last_update = datetime.strptime(data['last_update'], '%Y-%m-%d %H:%M:%S')
+                time_diff = (datetime.now() - last_update).total_seconds() / 60
+                if time_diff > 30:
+                    data['status'] = 'warning'
+            except:
+                pass
+        
+        return data
     except Exception as e:
         st.error(f"加载数据失败: {e}")
         return None
 
 def load_trades_history():
-    """加载交易历史"""
+    """加载交易历史（使用utils中的统一函数）"""
     try:
-        if os.path.exists(TRADES_FILE):
-            with open(TRADES_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        else:
-            return []
+        return load_trades_history_from_file(TRADES_FILE)
     except Exception as e:
         st.error(f"加载交易历史失败: {e}")
         return []

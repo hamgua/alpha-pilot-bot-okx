@@ -102,6 +102,134 @@ class ConfigManager:
                 'cancel_all_pending_orders': True,  # 取消所有挂单 - 触发横盘平仓时取消所有未成交订单
                 'log_consolidation_reason': True,  # 记录横盘原因 - true时记录详细的横盘触发原因
             },
+            'risk_control': {
+                'conservative': {
+                    'max_daily_loss': 50,           # 最大日亏损 50 USDT
+                    'max_position_risk': 0.03,      # 最大仓位风险 3%
+                    'max_consecutive_losses': 2,    # 最大连续亏损次数
+                    'emergency_stop_loss': 0.025,   # 紧急止损 2.5%
+                    'position_size_limits': {
+                        'min': 0.001,               # 最小仓位
+                        'max': 0.01,                # 最大仓位
+                        'initial': 0.005            # 初始仓位
+                    },
+                    'time_restrictions': {
+                        'min_hold_time': 30,        # 最小持仓时间(分钟)
+                        'max_hold_time': 240,       # 最大持仓时间(4小时)
+                        'cooldown_period': 60       # 交易冷却期(分钟)
+                    }
+                },
+                'moderate': {
+                    'max_daily_loss': 100,          # 最大日亏损 100 USDT
+                    'max_position_risk': 0.05,      # 最大仓位风险 5%
+                    'max_consecutive_losses': 3,    # 最大连续亏损次数
+                    'emergency_stop_loss': 0.04,    # 紧急止损 4%
+                    'position_size_limits': {
+                        'min': 0.001,               # 最小仓位
+                        'max': 0.02,                # 最大仓位
+                        'initial': 0.008            # 初始仓位
+                    },
+                    'time_restrictions': {
+                        'min_hold_time': 15,        # 最小持仓时间(分钟)
+                        'max_hold_time': 480,       # 最大持仓时间(8小时)
+                        'cooldown_period': 30       # 交易冷却期(分钟)
+                    }
+                },
+                'aggressive': {
+                    'max_daily_loss': 200,          # 最大日亏损 200 USDT
+                    'max_position_risk': 0.08,      # 最大仓位风险 8%
+                    'max_consecutive_losses': 4,    # 最大连续亏损次数
+                    'emergency_stop_loss': 0.06,    # 紧急止损 6%
+                    'position_size_limits': {
+                        'min': 0.001,               # 最小仓位
+                        'max': 0.05,                # 最大仓位
+                        'initial': 0.015            # 初始仓位
+                    },
+                    'time_restrictions': {
+                        'min_hold_time': 5,         # 最小持仓时间(分钟)
+                        'max_hold_time': 120,       # 最大持仓时间(2小时)
+                        'cooldown_period': 10       # 交易冷却期(分钟)
+                    }
+                }
+            },
+            'investment_strategies': {
+                'conservative': {
+                    'enabled': True,
+                    'name': '稳健型策略',
+                    'description': '适合80%交易者，低风险，稳定盈利 - 基于15分钟K线，保守仓位管理，严格止损',
+                    'kline_period': '15m',  # 主要使用15分钟K线
+                    'trend_indicators': ['MA20', 'MA60', 'MACD', 'RSI'],
+                    'volatility_threshold': 0.012,  # 波动宽度 1.2%
+                    'take_profit_pct': 0.04,  # 止盈 4%
+                    'stop_loss_pct': 0.018,  # 止损 1.8%
+                    'max_position_ratio': 0.4,  # 最大仓位 40%
+                    'allow_rebuy': False,  # 不允许补仓
+                    'consolidation_close_ratio': 1.0,  # 横盘全平仓
+                    'position_sizing': 'conservative',  # 保守仓位管理
+                    'min_trade_amount': 0.001,  # 最小交易量
+                    'max_leverage': 5,  # 最大杠杆倍数
+                    'risk_reward_ratio': 2.2,  # 风险收益比
+                    'consolidation_protection': True,  # 启用横盘保护
+                    'use_volume_confirmation': True,  # 使用成交量确认
+                    'max_daily_trades': 3,  # 最大日交易次数
+                    'min_position_hold_time': 30,  # 最小持仓时间(分钟)
+                    'market_condition_filter': 'all',  # 适用所有市场条件
+                    'signal_confirmation': 'strict'  # 严格信号确认
+                },
+                'moderate': {
+                    'enabled': True,
+                    'name': '中等型策略',
+                    'description': '趋势/波段交易，中等风险，抓趋势 - 基于30分钟K线，趋势跟随，波段操作',
+                    'kline_period': '30m',  # 主要使用30分钟K线
+                    'trend_indicators': ['MA20', 'MA120', 'MACD', 'RSI', 'Bollinger'],
+                    'volatility_threshold': 0.015,  # 波动宽度 1.5%
+                    'take_profit_pct': 0.09,  # 止盈 9%
+                    'stop_loss_pct': 0.035,  # 止损 3.5%
+                    'max_position_ratio': 0.7,  # 最大仓位 70%
+                    'allow_rebuy': True,  # 允许条件加仓
+                    'consolidation_close_ratio': 0.75,  # 横盘部分平仓75%
+                    'position_sizing': 'moderate',  # 中等仓位管理
+                    'min_trade_amount': 0.001,  # 最小交易量
+                    'max_leverage': 10,  # 最大杠杆倍数
+                    'risk_reward_ratio': 2.6,  # 风险收益比
+                    'consolidation_protection': True,  # 启用横盘保护
+                    'use_volume_confirmation': True,  # 使用成交量确认
+                    'max_daily_trades': 5,  # 最大日交易次数
+                    'min_position_hold_time': 60,  # 最小持仓时间(分钟)
+                    'market_condition_filter': 'trending',  # 适用于趋势市场
+                    'signal_confirmation': 'moderate',  # 中等信号确认
+                    'trend_strength_threshold': 0.6,  # 趋势强度阈值
+                    'add_position_on_trend': True  # 趋势确认后加仓
+                },
+                'aggressive': {
+                    'enabled': True,
+                    'name': '激进型策略',
+                    'description': '单边强趋势，高风险，最大化收益 - 基于5分钟K线，高频交易，强趋势捕捉',
+                    'kline_period': '5m',  # 主要使用5分钟K线
+                    'trend_indicators': ['EMA5', 'EMA20', 'EMA60', 'RSI', 'ATR'],
+                    'volatility_threshold': 0.02,  # 波动宽度 2%
+                    'take_profit_pct': 0.25,  # 止盈 25%
+                    'stop_loss_pct': 0.05,  # 止损 5%
+                    'max_position_ratio': 0.9,  # 最大仓位 90%
+                    'allow_rebuy': True,  # 允许多次加仓
+                    'consolidation_close_ratio': 0.3,  # 横盘减仓30%
+                    'position_sizing': 'aggressive',  # 激进仓位管理
+                    'min_trade_amount': 0.001,  # 最小交易量
+                    'max_leverage': 20,  # 最大杠杆倍数
+                    'risk_reward_ratio': 5.0,  # 风险收益比
+                    'consolidation_protection': False,  # 禁用横盘保护
+                    'use_volume_confirmation': False,  # 不依赖成交量确认
+                    'max_daily_trades': 10,  # 最大日交易次数
+                    'min_position_hold_time': 5,  # 最小持仓时间(分钟)
+                    'market_condition_filter': 'strong_trend',  # 适用于强趋势市场
+                    'signal_confirmation': 'fast',  # 快速信号确认
+                    'trend_strength_threshold': 0.8,  # 趋势强度阈值
+                    'use_trailing_stop': True,  # 使用移动止盈
+                    'trailing_stop_pct': 0.03,  # 移动止盈3%
+                    'pyramiding': True,  # 允许金字塔加仓
+                    'max_pyramid_levels': 3  # 最大金字塔层数
+                }
+            },
             'smart_tp_sl': {
                 'enabled': True,  # 智能止盈止损开关 - true启用动态调整
                 'base_sl_pct': 0.02,  # 基础止损比例 - 默认2%止损
