@@ -1,5 +1,5 @@
 """
-Alpha Arena OKX - 重构版主程序
+Alpha Pilot Bot OKX - 重构版主程序
 基于模块化架构的OKX自动交易系统
 """
 
@@ -16,8 +16,9 @@ import logging
 from config import config
 from trading import trading_engine
 from strategies import (
-    MarketAnalyzer, StrategySelector, StrategyBacktestEngine, 
-    StrategyOptimizer, StrategyMonitor, StrategyExecutor, EnhancedSignalProcessor
+    MarketAnalyzer, StrategySelector, StrategyBacktestEngine,
+    StrategyOptimizer, StrategyMonitor, StrategyExecutor, EnhancedSignalProcessor,
+    consolidation_detector, crash_protection, market_analyzer
 )
 from utils import (
     cache_manager, memory_manager, system_monitor, 
@@ -32,7 +33,7 @@ import asyncio
 from utils import log_info, log_warning, log_error
 
 class AlphaArenaBot:
-    """Alpha Arena OKX 交易机器人主类"""
+    """Alpha Pilot Bot OKX 交易机器人主类"""
     
     def __init__(self):
         self.is_running = False
@@ -42,7 +43,7 @@ class AlphaArenaBot:
         self.signal_cache = {}
         self.data_manager = DataManager()
         
-        log_info("🚀 Alpha Arena OKX 交易机器人初始化中...")
+        log_info("🚀 Alpha Pilot Bot OKX 交易机器人初始化中...")
         self._display_startup_info()
         
         # 初始化数据管理
@@ -51,7 +52,7 @@ class AlphaArenaBot:
     def _display_startup_info(self):
         """显示启动信息"""
         log_info("=" * 60)
-        log_info("🎯 Alpha Arena OKX 自动交易系统 v2.0")
+        log_info("🎯 Alpha Pilot Bot OKX 自动交易系统 v2.0")
         log_info("=" * 60)
         log_info("📊 系统特性:")
         log_info("   • 模块化架构设计")
@@ -108,13 +109,18 @@ class AlphaArenaBot:
         try:
             # 使用线程安全的方式运行异步函数
             import threading
-            import nest_asyncio
             
-            # 应用nest_asyncio以允许嵌套事件循环
+            # 尝试导入nest_asyncio，如果失败则使用替代方案
             try:
-                nest_asyncio.apply()
-            except:
-                pass  # 如果已应用则忽略
+                import nest_asyncio
+                # 应用nest_asyncio以允许嵌套事件循环
+                try:
+                    nest_asyncio.apply()
+                except:
+                    pass  # 如果已应用则忽略
+            except ImportError:
+                log_warning("⚠️ nest_asyncio模块未安装，使用替代方案")
+                # 没有nest_asyncio也能运行，只是可能会有警告
             
             # 使用线程池执行异步函数
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -159,129 +165,9 @@ class AlphaArenaBot:
             return await self._get_fallback_signal(market_data)
     
     def _generate_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """生成AI信号（增强版，模拟多AI融合）"""
-        price = market_data['price']
-        position = market_data['position']
-        
-        # 模拟多AI分析数据
-        kmi_analysis = {
-            'provider': 'Kimi',
-            'rsi': 40.5,
-            'trend': '强势下跌',
-            'recent_candles': ['阳线', '阳线', '阳线'],
-            'price_action': '震荡状态',
-            'recommendation': '保持现有持仓不变，等待更明确的交易信号',
-            'confidence': 0.75
-        }
-        
-        deepseek_analysis = {
-            'provider': 'Deepseek',
-            'price_position': '区间中点(50.0%)',
-            'macd_signal': 'bullish',
-            'ma_trend': '强势下跌',
-            'rsi_status': '正常区间(40.5)',
-            'strategy': '震荡市策略',
-            'recommendation': '在区间中点交易需要明确的信号，目前条件不满足',
-            'confidence': 0.72
-        }
-        
-        # 基础技术分析
-        trend = self._analyze_simple_trend()
-        volatility = self._calculate_recent_volatility()
-        
-        # 模拟融合分析
-        if trend > 0.6 and volatility < 5.0:
-            signal = 'BUY'
-            confidence = 0.8
-            kmi_reason = f"Kimi: 当前RSI为{kmi_analysis['rsi']}，处于中性区域，且市场趋势为{kmi_analysis['trend']}。最近3根15mK线均为阳线，但最后一根K线收盘价与当前价格相同，表明价格没有进一步上涨，市场可能处于{kmi_analysis['price_action']}。考虑到市场趋势和RSI指标，建议{kmi_analysis['recommendation']}。"
-            deepseek_reason = f"Deepseek: 当前价格位于区间中点（{deepseek_analysis['price_position']}），且无明确反转信号。MACD虽为{deepseek_analysis['macd_signal']}，但均线状态显示{deepseek_analysis['ma_trend']}，形成矛盾。RSI {kmi_analysis['rsi']}处于正常区间，未提供超卖信号。根据{deepseek_analysis['strategy']}，在区间中点（40-60%）交易需要明确的信号，目前条件不满足。"
-            fused_reason = f"{kmi_reason} | {deepseek_reason}"
-        elif trend < -0.6 and volatility < 5.0:
-            signal = 'SELL'
-            confidence = 0.8
-            kmi_reason = f"Kimi: 当前RSI为{kmi_analysis['rsi']}，显示超卖信号，且市场趋势为{kmi_analysis['trend']}。最近价格持续下跌，建议{kmi_analysis['recommendation']}。"
-            deepseek_reason = f"Deepseek: 当前价格接近区间下沿，MACD显示{deepseek_analysis['macd_signal']}信号，建议{kmi_analysis['recommendation']}。"
-            fused_reason = f"{kmi_reason} | {deepseek_reason}"
-        else:
-            signal = 'HOLD'
-            confidence = 0.5
-            kmi_reason = f"Kimi: 当前RSI为{kmi_analysis['rsi']}，市场趋势{kmi_analysis['trend']}，最近3根K线{kmi_analysis['recent_candles']}，建议{kmi_analysis['recommendation']}。"
-            deepseek_reason = f"Deepseek: 当前处于{deepseek_analysis['price_position']}，{deepseek_analysis['strategy']}适用，{deepseek_analysis['recommendation']}。"
-            fused_reason = f"{kmi_reason} | {deepseek_reason}"
-        
-        # 如果有持仓，考虑平仓逻辑
-        if position and position.get('size', 0) > 0:
-            entry_price = position.get('entry_price', 0)
-            if entry_price > 0:
-                profit_pct = (price - entry_price) / entry_price
-                
-                # 盈利保护
-                if profit_pct > 0.12:  # 盈利超过5%
-                    signal = 'SELL' if position['side'] == 'long' else 'BUY'
-                    confidence = 0.9
-                    kmi_reason = f"Kimi: 当前持仓盈利{profit_pct:.2%}，触发盈利保护机制，建议平仓锁定利润。"
-                    deepseek_reason = f"Deepseek: 持仓盈利{profit_pct:.2%}，达到止盈阈值，建议执行盈利保护策略。"
-                    fused_reason = f"{kmi_reason} | {deepseek_reason}"
-                elif profit_pct < -0.02:  # 亏损超过2%
-                    signal = 'SELL' if position['side'] == 'long' else 'BUY'
-                    confidence = 0.7
-                    kmi_reason = f"Kimi: 当前持仓亏损{profit_pct:.2%}，触发止损保护机制，建议及时止损。"
-                    deepseek_reason = f"Deepseek: 持仓亏损{profit_pct:.2%}，达到风险阈值，建议执行止损策略。"
-                    fused_reason = f"{kmi_reason} | {deepseek_reason}"
-        
-        # 构建详细的JSON返回
-        ai_signal_data = {
-            'signal': signal,
-            'confidence': confidence,
-            'timestamp': datetime.now().isoformat(),
-            'ai_providers': {
-                'kimi': kmi_analysis,
-                'deepseek': deepseek_analysis
-            },
-            'fusion_analysis': {
-                'final_signal': signal,
-                'fusion_confidence': confidence,
-                'fusion_reason': fused_reason,
-                'market_context': {
-                    'current_price': price,
-                    'trend_strength': abs(trend),
-                    'volatility_level': volatility
-                }
-            },
-            'trend': trend,
-            'volatility': volatility
-        }
-        
-        # 输出AI原始数据明细格式
-        log_info(f"🤖 Kimi回复: ```json\n{json.dumps({
-            'signal': signal,
-            'reason': kmi_reason,
-            'confidence': 'HIGH' if kmi_analysis['confidence'] >= 0.8 else 'MEDIUM' if kmi_analysis['confidence'] >= 0.6 else 'LOW'
-        }, ensure_ascii=False, indent=2)}\n```")
-        log_info("✅ JSON解析成功: " + str({
-            'signal': signal,
-            'reason': kmi_reason,
-            'confidence': 'HIGH' if kmi_analysis['confidence'] >= 0.8 else 'MEDIUM' if kmi_analysis['confidence'] >= 0.6 else 'LOW'
-        }))
-        
-        log_info(f"🤖 Deepseek回复: ```json\n{json.dumps({
-            'signal': signal,
-            'reason': deepseek_reason,
-            'confidence': 'HIGH' if deepseek_analysis['confidence'] >= 0.8 else 'MEDIUM' if deepseek_analysis['confidence'] >= 0.6 else 'LOW'
-        }, ensure_ascii=False, indent=2)}\n```")
-        log_info("✅ JSON解析成功: " + str({
-            'signal': signal,
-            'reason': deepseek_reason,
-            'confidence': 'HIGH' if deepseek_analysis['confidence'] >= 0.8 else 'MEDIUM' if deepseek_analysis['confidence'] >= 0.6 else 'LOW'
-        }))
-        
-        # 输出融合结果
-        log_info("📊 【多AI融合信号分析】")
-        log_info(f"   📈 最终信号: {signal}")
-        log_info(f"   💡 融合信心: {'HIGH' if confidence >= 0.8 else 'MEDIUM' if confidence >= 0.6 else 'LOW'}")
-        log_info(f"   📋 融合理由: {fused_reason}")
-        
-        return ai_signal_data
+        """生成AI信号 - 已废弃，使用增强版本"""
+        # 直接调用增强版本以保持向后兼容性
+        return self._generate_enhanced_ai_signal(market_data)
     
     def _analyze_simple_trend(self) -> float:
         """简单趋势分析"""
@@ -361,24 +247,42 @@ class AlphaArenaBot:
         return None
     
     def _is_cache_valid(self, cached_signal: Dict[str, Any]) -> bool:
-        """检查缓存是否有效"""
+        """检查缓存是否有效 - 增强版本"""
         if not cached_signal:
             return False
         
-        # 检查时间有效性
-        signal_time = datetime.fromisoformat(cached_signal.get('timestamp', ''))
-        age_seconds = (datetime.now() - signal_time).total_seconds()
-        max_age = config.get('ai', 'cache_duration', 900)
-        
-        if age_seconds > max_age:
+        try:
+            # 检查时间有效性
+            signal_time = datetime.fromisoformat(cached_signal.get('timestamp', ''))
+            age_seconds = (datetime.now() - signal_time).total_seconds()
+            max_age = config.get('ai', 'cache_duration', 900)
+            
+            if age_seconds > max_age:
+                return False
+            
+            # 检查市场状态是否发生重大变化
+            recent_volatility = self._calculate_recent_volatility()
+            if recent_volatility > 5.0:  # 波动率超过5%时刷新信号
+                return False
+            
+            # 检查价格变化是否超过阈值
+            if len(self.price_history) >= 2:
+                current_price = self.price_history[-1]
+                cached_price = cached_signal.get('market_context', {}).get('current_price', current_price)
+                if abs(current_price - cached_price) / cached_price > 0.02:  # 价格变化超过2%
+                    return False
+            
+            # 检查持仓状态是否变化
+            current_position = trading_engine.get_position_info()
+            cached_position = cached_signal.get('market_context', {}).get('position', {})
+            if current_position['has_position'] != (cached_position.get('size', 0) > 0):
+                return False
+            
+            return True
+            
+        except Exception as e:
+            log_warning(f"缓存验证异常: {e}")
             return False
-        
-        # 检查市场状态是否发生重大变化
-        recent_volatility = self._calculate_recent_volatility()
-        if recent_volatility > 5.0:  # 波动率超过5%时刷新信号
-            return False
-        
-        return True
     
     async def _find_similar_market_state(self, cache_key: str) -> Optional[Dict[str, Any]]:
         """基于相似市场状态查找历史信号"""
@@ -547,10 +451,22 @@ class AlphaArenaBot:
             if not market_data or not isinstance(market_data, dict):
                 return {}
                 
-            # 更新价格历史
-            self.price_history.append(market_data['price'])
-            if len(self.price_history) > 100:
-                self.price_history.pop(0)
+            # 更新价格历史 - 添加数据验证
+            current_price = market_data.get('price', 0)
+            if current_price > 0:  # 验证价格有效性
+                # 检查价格异常值（单日波动超过20%视为异常）
+                if len(self.price_history) > 0:
+                    last_price = self.price_history[-1]
+                    if abs(current_price - last_price) / last_price > 0.2:
+                        log_warning(f"⚠️ 检测到价格异常跳跃: {last_price} -> {current_price}")
+                        # 可以选择不记录异常价格或使用平滑处理
+                        current_price = last_price * 1.05 if current_price > last_price else last_price * 0.95
+                
+                self.price_history.append(current_price)
+                if len(self.price_history) > 100:
+                    self.price_history.pop(0)
+            else:
+                log_warning("⚠️ 无效的价格数据，跳过价格历史更新")
 
             # 获取完整的价格历史数据用于分析
             price_history = self._get_price_history_for_analysis()
@@ -617,7 +533,7 @@ class AlphaArenaBot:
             # 检查暴跌保护
             try:
                 crash_protection_decision = crash_protection.should_trigger_crash_protection(
-                    market_data['price'], market_data, position
+                    position, market_data
                 )
             except Exception:
                 crash_protection_decision = {'should_protect': False, 'reason': '检查异常'}
@@ -865,7 +781,7 @@ class AlphaArenaBot:
             log_info("⚠️ 回退到简化执行逻辑")
             self._simplified_execute_trade_signal(signal, signal_data, market_data, market_state)
 
-    def _simplified_execute_trade_signal(self, signal: str, signal_data: Dict[str, Any], 
+    def _simplified_execute_trade_signal(self, signal: str, signal_data: Dict[str, Any],
                                      market_data: Dict[str, Any], market_state: Dict[str, Any]):
         """简化执行逻辑 - 作为回退"""
         log_info(f"🎯 简化执行交易信号: {signal}")
@@ -873,29 +789,54 @@ class AlphaArenaBot:
         current_price = market_data['price']
         position = market_data.get('position')
         
-        # 使用信号处理器处理
-        processed_signal = signal_processor.process_signal(signal_data, position)
-        if processed_signal == 'HOLD':
-            log_info("📊 保持持仓，跳过交易")
+        # 使用信号处理器处理 - 修复未定义变量问题
+        try:
+            from strategies import EnhancedSignalProcessor
+            signal_processor = EnhancedSignalProcessor(trading_engine)
+            processed_signal = signal_processor.process_signal(signal_data, market_data)
+            if processed_signal == False:  # 注意：process_signal返回bool，需要检查逻辑
+                log_info("📊 保持持仓，跳过交易")
+                return
+        except Exception as e:
+            log_error(f"信号处理失败: {e}")
             return
         
-        # 计算订单大小
-        order_size = signal_processor.calculate_order_size(
-            market_data['balance'], processed_signal, current_price
-        )
+        # 计算订单大小 - 使用策略选择器获取配置
+        try:
+            from strategies import StrategySelector
+            selector = StrategySelector()
+            strategy_config = selector.get_strategy_config()
+            max_position_size = strategy_config.get('max_position_ratio', 0.01)
+            
+            # 简化的订单大小计算
+            balance = market_data.get('balance', {}).get('free', 0)
+            order_size = min(max_position_size * balance / current_price, 0.01)  # 最大0.01 BTC
+        except Exception as e:
+            log_error(f"订单大小计算失败: {e}")
+            order_size = 0.001  # 默认订单大小
         
         if order_size <= 0:
             log_warning("⚠️ 订单大小为0，跳过交易")
             return
         
-        # 计算止盈止损
-        tp_sl_params = risk_manager.calculate_dynamic_tp_sl(
-            processed_signal, current_price, market_state, position
-        )
+        # 计算止盈止损 - 使用策略选择器
+        try:
+            from strategies import RiskManager
+            risk_manager = RiskManager()
+            tp_sl_params = risk_manager.calculate_dynamic_tp_sl(
+                signal, current_price, market_state, position
+            )
+        except Exception as e:
+            log_error(f"止盈止损计算失败: {e}")
+            # 使用默认的止盈止损
+            tp_sl_params = {
+                'stop_loss': current_price * 0.98,
+                'take_profit': current_price * 1.06
+            }
         
         # 执行交易
         success = trading_engine.execute_trade_with_tp_sl(
-            processed_signal, order_size, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
+            signal, order_size, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
         )
         
         if success:
@@ -934,19 +875,24 @@ class AlphaArenaBot:
         if self._check_price_crash_protection(current_position, market_data):
             return
         
-        # 计算动态止盈止损
-        signal = 'BUY' if current_position['side'] == 'long' else 'SELL'
-        
-        dynamic_tp_sl = risk_manager.calculate_dynamic_tp_sl(
-            signal, current_price, market_state, current_position
-        )
-        
-        # 更新止盈止损
-        trading_engine.update_risk_management(
-            current_position,
-            dynamic_tp_sl['stop_loss'],
-            dynamic_tp_sl['take_profit']
-        )
+        # 计算动态止盈止损 - 修复未定义变量问题
+        try:
+            from strategies import RiskManager
+            risk_manager = RiskManager()
+            signal = 'BUY' if current_position['side'] == 'long' else 'SELL'
+            
+            dynamic_tp_sl = risk_manager.calculate_dynamic_tp_sl(
+                signal, current_price, market_state, current_position
+            )
+            
+            # 更新止盈止损
+            trading_engine.update_risk_management(
+                current_position,
+                dynamic_tp_sl['stop_loss'],
+                dynamic_tp_sl['take_profit']
+            )
+        except Exception as e:
+            log_error(f"风险管理更新失败: {e}")
     
     def _check_price_crash_protection(self, position: Dict[str, Any], 
                                     market_data: Dict[str, Any]) -> bool:
@@ -1000,12 +946,8 @@ class AlphaArenaBot:
                 # 执行横盘处理动作
                 action = consolidation_result['action']
                 if action:
-                    from trading_extensions import TradingExtensions
-                    trading_ext = TradingExtensions(trading_engine)
-                    
-                    success = consolidation_detector.execute_consolidation_action(
-                        action, position, trading_ext
-                    )
+                    # 使用交易引擎直接执行横盘处理动作
+                    success = self._execute_consolidation_action(action, position, market_data)
                     
                     if success:
                         log_info(f"✅ 横盘处理动作执行成功：{action}")
@@ -1022,6 +964,55 @@ class AlphaArenaBot:
                 
         except Exception as e:
             log_error(f"检查横盘利润锁定异常: {e}")
+    
+    def _execute_consolidation_action(self, action: str, position: Dict[str, Any],
+                                    market_data: Dict[str, Any]) -> bool:
+        """执行横盘处理动作"""
+        try:
+            log_info(f"🔄 执行横盘处理动作: {action}")
+            
+            if action == 'partial_close':
+                # 部分平仓
+                current_size = position.get('size', 0)
+                close_ratio = config.get('strategies', 'profit_lock_strategy', {}).get('partial_close_ratio', 0.5)
+                close_size = current_size * close_ratio
+                
+                if close_size > 0:
+                    success = trading_engine.close_position(close_size)
+                    if success:
+                        log_info(f"✅ 部分平仓成功: {close_size} BTC")
+                        return True
+                    else:
+                        log_error("❌ 部分平仓失败")
+                        return False
+                        
+            elif action == 'full_close':
+                # 全部平仓
+                success = trading_engine.close_position(position.get('size', 0))
+                if success:
+                    log_info("✅ 全部平仓成功")
+                    return True
+                else:
+                    log_error("❌ 全部平仓失败")
+                    return False
+                    
+            elif action == 'cancel_orders':
+                # 取消所有挂单
+                success = trading_engine.cancel_all_orders()
+                if success:
+                    log_info("✅ 取消所有挂单成功")
+                    return True
+                else:
+                    log_error("❌ 取消挂单失败")
+                    return False
+                    
+            else:
+                log_warning(f"⚠️ 未知的横盘处理动作: {action}")
+                return False
+                
+        except Exception as e:
+            log_error(f"执行横盘处理动作异常: {e}")
+            return False
     
     def _get_ai_signal_history(self) -> list[str]:
         """获取AI信号历史"""
@@ -1208,7 +1199,7 @@ class AlphaArenaBot:
     def run(self):
         """运行交易机器人"""
         try:
-            log_info("🚀 Alpha Arena OKX 交易机器人启动成功！")
+            log_info("🚀 Alpha Pilot Bot OKX 交易机器人启动成功！")
             self.is_running = True
             
             while self.is_running:

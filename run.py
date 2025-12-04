@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Alpha Arena OKX - 重构版统一启动程序
+Alpha Pilot Bot OKX - 重构版统一启动程序
 适用于宝塔面板等单入口部署场景
 
 智能启动：
@@ -29,7 +29,7 @@ try:
     WEB_ENABLED = WEB_CONFIG.get('enabled', False)
     WEB_PORT = WEB_CONFIG.get('port', 8501)
 except Exception as e:
-    log(f"⚠️  读取配置失败，使用默认配置: {e}")
+    print(f"[WARNING] 读取配置失败，使用默认配置: {e}")
     WEB_ENABLED = False
     WEB_PORT = 8501
 
@@ -48,7 +48,7 @@ from utils import log_info as log
 def run_trading_bot():
     """运行交易程序（重构版）"""
     try:
-        log("🤖 启动Alpha Arena OKX交易程序...")
+        log("🤖 启动Alpha Pilot Bot OKX交易程序...")
         # 导入重构版交易程序主函数
         from main import AlphaArenaBot
         
@@ -164,7 +164,7 @@ def signal_handler(signum, frame):
 
 def check_environment():
     """检查运行环境"""
-    log("🔍 检查Alpha Arena OKX运行环境...")
+    log("🔍 检查Alpha Pilot Bot OKX运行环境...")
     
     # 检查Python版本
     python_version = sys.version_info
@@ -267,7 +267,7 @@ def main():
     """主函数"""
     # 打印启动信息
     log("=" * 60)
-    log("🤖 Alpha Arena OKX - 重构版统一启动程序")
+    log("🤖 Alpha Pilot Bot OKX - 重构版统一启动程序")
     log("=" * 60)
     log("")
     

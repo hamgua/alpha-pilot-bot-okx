@@ -1,5 +1,5 @@
 """
-Alpha Arena OKX 工具模块
+Alpha Pilot Bot OKX 工具模块
 包含通用工具函数和辅助功能
 """
 
@@ -8,6 +8,7 @@ import time
 import json
 import threading
 import logging
+import glob
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -507,8 +508,19 @@ class ErrorRecoveryManager:
     """异常恢复管理器"""
     
     def __init__(self):
-        from config import config
-        self.config = config.get('system', 'error_recovery') or {}
+        # 延迟导入config，避免循环导入
+        try:
+            from config import config
+            self.config = config.get('system', 'error_recovery') or {}
+        except ImportError:
+            # 如果导入失败，使用默认配置
+            self.config = {
+                'network': {'max_retries': 3, 'retry_delay': 5, 'cooldown_duration': 60},
+                'api': {'max_retries': 2, 'retry_delay': 3},
+                'rate_limit': {'backoff_multiplier': 2, 'base_delay': 10},
+                'system': {'memory_threshold': 0.8}
+            }
+        
         self.error_classifier = ErrorClassifier()
         self.recovery_strategies = {
             'network': self._handle_network_error,
@@ -819,11 +831,18 @@ class StatePersistence:
     """状态持久化管理器"""
     
     def __init__(self):
-        from config import config
-        self.config = config.get('system', 'state_persistence') or {}
-        self.state_dir = self.config.get('state_dir', './data/state')
-        self.checkpoint_interval = self.config.get('checkpoint_interval', 300)  # 5分钟
-        self.max_checkpoints = self.config.get('max_checkpoints', 10)
+        # 延迟导入config，避免循环导入
+        try:
+            from config import config
+            self.config = config.get('system', 'state_persistence') or {}
+            self.state_dir = self.config.get('state_dir', './data/state')
+            self.checkpoint_interval = self.config.get('checkpoint_interval', 300)  # 5分钟
+            self.max_checkpoints = self.config.get('max_checkpoints', 10)
+        except ImportError:
+            # 使用默认配置
+            self.state_dir = './data/state'
+            self.checkpoint_interval = 300
+            self.max_checkpoints = 10
         
         # 确保状态目录存在
         os.makedirs(self.state_dir, exist_ok=True)
@@ -887,8 +906,19 @@ class RecoveryEngine:
     """恢复引擎"""
     
     def __init__(self):
-        from config import config
-        self.config = config.get('system', 'recovery') or {}
+        # 延迟导入config，避免循环导入
+        try:
+            from config import config
+            self.config = config.get('system', 'recovery') or {}
+        except ImportError:
+            # 使用默认配置
+            self.config = {
+                'enabled': True,
+                'max_retries': 3,
+                'retry_delay': 1,
+                'backoff_factor': 2.0
+            }
+        
         self.enabled = self.config.get('enabled', True)
         self.max_retries = self.config.get('max_retries', 3)
         self.retry_delay = self.config.get('retry_delay', 1)
@@ -923,10 +953,16 @@ class CheckpointManager:
     """检查点管理器"""
     
     def __init__(self):
-        from config import config
-        self.config = config.get('system', 'checkpoint_manager') or {}
-        self.checkpoint_dir = self.config.get('checkpoint_dir', './data/checkpoints')
-        self.max_checkpoints = self.config.get('max_checkpoints', 5)
+        # 延迟导入config，避免循环导入
+        try:
+            from config import config
+            self.config = config.get('system', 'checkpoint_manager') or {}
+            self.checkpoint_dir = self.config.get('checkpoint_dir', './data/checkpoints')
+            self.max_checkpoints = self.config.get('max_checkpoints', 5)
+        except ImportError:
+            # 使用默认配置
+            self.checkpoint_dir = './data/checkpoints'
+            self.max_checkpoints = 5
         
         # 确保检查点目录存在
         os.makedirs(self.checkpoint_dir, exist_ok=True)

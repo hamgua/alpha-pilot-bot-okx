@@ -1,11 +1,14 @@
 """
-Alpha Arena OKX 配置管理模块
+Alpha Pilot Bot OKX 配置管理模块
 将所有配置项集中管理，实现配置与业务逻辑的完全分离
 """
 
 import os
 from dotenv import load_dotenv
 from typing import Dict, Any
+
+# 导入日志函数
+from utils import log_warning, log_error
 
 load_dotenv()
 
@@ -290,28 +293,67 @@ class ConfigManager:
     
     def _load_ai_config(self) -> Dict[str, Any]:
         """AI配置 - 人工智能信号生成相关设置"""
-        return {
-            'use_multi_ai': os.getenv('USE_MULTI_AI', 'false').lower() == 'true',  # 多AI模式 - true使用多个AI模型融合信号
-            'cache_duration': int(os.getenv('AI_CACHE_DURATION', '900')),  # 缓存时长 - AI信号缓存15分钟（900秒）
-            'timeout': int(os.getenv('AI_TIMEOUT', '30')),  # AI超时时间 - 等待AI回复最多30秒
-            'max_retries': int(os.getenv('AI_MAX_RETRIES', '2')),  # 最大重试次数 - AI调用失败最多重试2次
-            'min_confidence_threshold': float(os.getenv('AI_MIN_CONFIDENCE', '0.5')),  # 最低信心阈值 - AI信心低于50%不执行交易
-            'ai_provider': os.getenv('AI_PROVIDER', 'kimi'),  # 单AI模式提供商 - 当USE_MULTI_AI=false时使用
-            'ai_fusion_providers': os.getenv('AI_FUSION_PROVIDERS', 'deepseek,kimi'),  # 多AI融合提供商 - 当USE_MULTI_AI=true时使用
-            'models': {
-                'kimi': os.getenv('KIMI_API_KEY'),  # Kimi API密钥 - 月之暗面AI模型
-                'deepseek': os.getenv('DEEPSEEK_API_KEY'),  # DeepSeek API密钥 - 深度求索AI模型
-                'qwen': os.getenv('QWEN_API_KEY'),  # Qwen API密钥 - 通义千问模型
-                'openai': os.getenv('OPENAI_API_KEY')  # OpenAI API密钥 - ChatGPT模型
-            },
-            'fallback_enabled': os.getenv('AI_FALLBACK_ENABLED', 'true').lower() == 'true',  # 回退机制 - true在AI失败时使用回退策略
-            'similarity_threshold': float(os.getenv('AI_SIMILARITY_THRESHOLD', '0.8')),  # 相似度阈值 - 历史信号相似度高于80%使用缓存
-            'cache_levels': {
-                'memory': True,  # 内存缓存 - 在内存中缓存信号
-                'price_bucket': True,  # 价格区间缓存 - 按价格区间缓存信号
-                'pattern': True  # 模式缓存 - 按市场模式缓存信号
+        # 安全加载AI配置，提供完整的回退机制
+        try:
+            use_multi_ai = os.getenv('USE_MULTI_AI', 'false').lower() == 'true'
+            cache_duration = int(os.getenv('AI_CACHE_DURATION', '900'))
+            timeout = int(os.getenv('AI_TIMEOUT', '30'))
+            max_retries = int(os.getenv('AI_MAX_RETRIES', '2'))
+            min_confidence = float(os.getenv('AI_MIN_CONFIDENCE', '0.5'))
+            ai_provider = os.getenv('AI_PROVIDER', 'kimi')
+            fusion_providers = os.getenv('AI_FUSION_PROVIDERS', 'deepseek,kimi')
+            
+            # 获取API密钥，确保安全性
+            models = {
+                'kimi': os.getenv('KIMI_API_KEY'),
+                'deepseek': os.getenv('DEEPSEEK_API_KEY'),
+                'qwen': os.getenv('QWEN_API_KEY'),
+                'openai': os.getenv('OPENAI_API_KEY')
             }
-        }
+            
+            # 过滤掉空的API密钥
+            valid_models = {k: v for k, v in models.items() if v and v.strip()}
+            
+            if not valid_models:
+                log_warning("⚠️ 未配置任何AI API密钥，AI功能将使用回退模式")
+            
+            return {
+                'use_multi_ai': use_multi_ai,
+                'cache_duration': cache_duration,
+                'timeout': timeout,
+                'max_retries': max_retries,
+                'min_confidence_threshold': min_confidence,
+                'ai_provider': ai_provider,
+                'ai_fusion_providers': fusion_providers,
+                'models': valid_models,
+                'fallback_enabled': os.getenv('AI_FALLBACK_ENABLED', 'true').lower() == 'true',
+                'similarity_threshold': float(os.getenv('AI_SIMILARITY_THRESHOLD', '0.8')),
+                'cache_levels': {
+                    'memory': True,
+                    'price_bucket': True,
+                    'pattern': True
+                }
+            }
+        except Exception as e:
+            log_error(f"AI配置加载失败: {e}")
+            # 提供完整的回退配置
+            return {
+                'use_multi_ai': False,
+                'cache_duration': 900,
+                'timeout': 30,
+                'max_retries': 2,
+                'min_confidence_threshold': 0.5,
+                'ai_provider': 'kimi',
+                'ai_fusion_providers': 'deepseek,kimi',
+                'models': {},
+                'fallback_enabled': True,
+                'similarity_threshold': 0.8,
+                'cache_levels': {
+                    'memory': True,
+                    'price_bucket': True,
+                    'pattern': True
+                }
+            }
     
     def _load_system_config(self) -> Dict[str, Any]:
         """系统配置 - 系统运行和监控相关设置"""

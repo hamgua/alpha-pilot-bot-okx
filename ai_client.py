@@ -1,5 +1,5 @@
 """
-Alpha Arena OKX AI客户端模块
+Alpha Pilot Bot OKX AI客户端模块
 实现多AI API调用和信号融合功能
 """
 
@@ -7,6 +7,7 @@ import asyncio
 import aiohttp
 import json
 import time
+import traceback
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import concurrent.futures
@@ -52,20 +53,23 @@ class AIClient:
                 ('openai', 'https://api.openai.com/v1/chat/completions', 'gpt-3.5-turbo')
             ]:
                 api_key = ai_models.get(provider_name) if ai_models else None
-                if api_key:
+                if api_key and api_key.strip():  # 确保API密钥有效且非空
                     self.providers[provider_name] = {
                         'url': url,
                         'model': model,
-                        'api_key': api_key
+                        'api_key': api_key.strip()
                     }
+                    log_info(f"✅ {provider_name} API已配置")
                 else:
-                    log_warning(f"{provider_name} API密钥未配置")
+                    log_warning(f"⚠️ {provider_name} API密钥未配置或无效")
                     
             log_info(f"已配置的AI提供商: {list(self.providers.keys())}")
             
+            if not self.providers:
+                log_warning("⚠️ 没有任何AI提供商被配置，将使用回退信号模式")
+            
         except Exception as e:
             log_error(f"AI客户端初始化失败: {type(e).__name__}: {e}")
-            import traceback
             log_error(f"初始化堆栈:\n{traceback.format_exc()}")
             self.providers = {}
         

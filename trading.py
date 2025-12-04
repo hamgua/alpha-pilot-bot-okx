@@ -1,5 +1,5 @@
 """
-Alpha Arena OKX 交易逻辑模块
+Alpha Pilot Bot OKX 交易逻辑模块
 封装所有交易相关的核心功能
 """
 
@@ -115,28 +115,63 @@ class OrderManager:
                     log_warning("❌ 做空功能已禁用")
                     return False
             
+            # 参数验证 - 增强版本
+            if amount <= 0:
+                log_error(f"❌ 订单数量无效: {amount}")
+                return False
+            
+            # 精度验证（OKX交易所要求）
+            # BTC/USDT合约：数量精度为0.001，价格精度为0.01
+            amount_precision = len(str(amount).split('.')[-1]) if '.' in str(amount) else 0
+            if amount_precision > 3:
+                log_error(f"❌ 订单数量精度超出限制: {amount} (最大支持3位小数)")
+                return False
+            
+            # 最小交易量验证
+            min_trade_amount = config.get('trading', 'min_trade_amount', 0.001)
+            if amount < min_trade_amount:
+                log_error(f"❌ 订单数量小于最小交易量: {amount} < {min_trade_amount}")
+                return False
+            
+            # 最大仓位验证
+            max_position_size = config.get('trading', 'max_position_size', 0.01)
+            if amount > max_position_size:
+                log_warning(f"⚠️ 订单数量超过最大仓位限制: {amount} > {max_position_size}")
+                
+            # 确保数量格式正确
+            amount_str = str(float(amount))
+            
             params = {
+                'instId': self.inst_id,
                 'tdMode': 'cross',
                 'side': 'buy' if side.upper() == 'BUY' else 'sell',
                 'ordType': 'market',
-                'sz': str(amount)
+                'sz': amount_str
             }
-            
-            # 可选：添加简短的交易标签，避免tag参数错误
-            # 'tag': 'AA'  # 简化为2个字符，符合OKX要求
             
             if reduce_only:
                 params['reduceOnly'] = True
             
-            response = self.exchange.private_post_trade_order({
-                'instId': self.inst_id,
-                **params
-            })
+            log_info(f"📤 发送市价单请求: {params}")
+            response = self.exchange.privatePostTradeOrder(params)
             
-            return response.get('code') == '0'
+            if response and isinstance(response, dict):
+                code = response.get('code')
+                if code == '0':
+                    log_info(f"✅ 市价单成功: {side} {amount}")
+                    return True
+                else:
+                    msg = response.get('msg', '未知错误')
+                    log_error(f"❌ 市价单失败: {msg}")
+                    return False
+            else:
+                log_error(f"❌ 市价单响应异常: {response}")
+                return False
                 
         except Exception as e:
-            log_error(f"市价单异常: {e}")
+            log_error(f"市价单异常: {type(e).__name__}: {e}")
+            import traceback
+            log_error(f"市价单详细错误: {traceback.format_exc()}")
             return False
     
     def place_limit_order(self, side: str, amount: float, price: float, reduce_only: bool = False) -> bool:
@@ -301,19 +336,26 @@ class OrderManager:
             log_error(f"详细错误: {traceback.format_exc()}")
             return False
 
-    def _calculate_reasonable_prices(self, position_side: str, current_price: float, 
+    def _calculate_reasonable_prices(self, position_side: str, current_price: float,
                                    stop_loss_price: float, take_profit_price: float) -> Tuple[float, float]:
-        """基于原项目逻辑计算动态合理的止损止盈价格"""
+        """基于原项目逻辑计算动态合理的止损止盈价格 - 增强版本"""
         try:
             # 获取市场波动率用于动态调整
             volatility = self._get_market_volatility()
             
-            # 基于波动率的动态区间计算
+            # 获取当前市场状态
+            market_state = self._get_market_state()
+            atr_pct = market_state.get('atr_pct', 2.0)
+            
+            # 综合波动率计算（结合历史波动率和ATR）
+            combined_volatility = (volatility + atr_pct) / 2
+            
+            # 基于综合波动率的动态区间计算
             base_sl_pct = 0.02  # 基础2%止损
             base_tp_pct = 0.06  # 基础6%止盈
             
-            # 根据波动率调整区间
-            volatility_multiplier = max(0.5, min(2.0, volatility / 2.0))
+            # 根据综合波动率调整区间
+            volatility_multiplier = max(0.5, min(2.0, combined_volatility / 2.0))
             
             # 动态计算合理区间
             if position_side == 'long':
@@ -365,20 +407,115 @@ class OrderManager:
                 return round(current_price * 1.02, 2), round(current_price * 0.94, 2)
 
     def _get_market_volatility(self) -> float:
-        """获取当前市场波动率"""
+        """获取当前市场波动率 - 增强版本"""
         try:
-            # 简化实现 - 使用ATR或价格变化率
+            # 获取当前价格
             ticker = self.exchange.fetch_ticker(self.symbol)
             high = float(ticker.get('high', 0))
             low = float(ticker.get('low', 0))
             last = float(ticker.get('last', 0))
             
             if high > 0 and low > 0 and last > 0:
+                # 计算日内波动率
                 daily_range = abs(high - low) / last * 100
+                
+                # 获取历史波动率（使用最近的价格历史）
+                price_history = self._get_recent_price_history(24)  # 24小时数据
+                if len(price_history) >= 2:
+                    closes = [float(p['close']) for p in price_history if p.get('close', 0) > 0]
+                    if len(closes) >= 2:
+                        # 计算历史波动率（标准差）
+                        returns = []
+                        for i in range(1, len(closes)):
+                            if closes[i-1] > 0:
+                                returns.append(abs(closes[i] - closes[i-1]) / closes[i-1])
+                        
+                        if returns:
+                            hist_volatility = np.mean(returns) * 100 * np.sqrt(24)  # 年化波动率
+                            # 综合日内波动率和历史波动率
+                            combined_volatility = (daily_range + hist_volatility) / 2
+                            return max(0.5, min(5.0, combined_volatility))
+                
+                # 如果只日内波动率可用
                 return max(0.5, min(5.0, daily_range))
+            
             return 2.0  # 默认波动率
-        except:
+            
+        except Exception as e:
+            log_warning(f"获取市场波动率失败: {e}")
             return 2.0
+    
+    def _get_recent_price_history(self, hours: int = 24) -> List[Dict[str, float]]:
+        """获取最近的价格历史"""
+        try:
+            # 使用1小时K线获取最近的价格历史
+            ohlcv = self.exchange.fetch_ohlcv(self.symbol, '1h', limit=hours)
+            
+            history = []
+            for candle in ohlcv:
+                if len(candle) >= 6:
+                    history.append({
+                        'timestamp': candle[0],
+                        'open': float(candle[1]),
+                        'high': float(candle[2]),
+                        'low': float(candle[3]),
+                        'close': float(candle[4]),
+                        'volume': float(candle[5])
+                    })
+            
+            return history
+            
+        except Exception as e:
+            log_warning(f"获取价格历史失败: {e}")
+            return []
+    
+    def _get_market_state(self) -> Dict[str, Any]:
+        """获取当前市场状态"""
+        try:
+            # 获取当前价格
+            ticker = self.exchange.fetch_ticker(self.symbol)
+            current_price = float(ticker.get('last', 0))
+            
+            # 获取价格历史计算ATR
+            price_history = self._get_recent_price_history(24)
+            if len(price_history) >= 14:
+                closes = [p['close'] for p in price_history]
+                highs = [p['high'] for p in price_history]
+                lows = [p['low'] for p in price_history]
+                
+                # 简化的ATR计算
+                if len(closes) >= 14:
+                    tr_values = []
+                    for i in range(1, len(closes)):
+                        if closes[i-1] > 0:
+                            tr = max(
+                                highs[i] - lows[i],
+                                abs(highs[i] - closes[i-1]),
+                                abs(lows[i] - closes[i-1])
+                            )
+                            tr_values.append(tr / closes[i-1])
+                    
+                    if tr_values:
+                        atr_pct = np.mean(tr_values[-14:]) * 100
+                        return {
+                            'atr_pct': atr_pct,
+                            'current_price': current_price,
+                            'volatility': 'high' if atr_pct > 3.0 else 'low' if atr_pct < 1.0 else 'normal'
+                        }
+            
+            return {
+                'atr_pct': 2.0,
+                'current_price': current_price,
+                'volatility': 'normal'
+            }
+            
+        except Exception as e:
+            log_warning(f"获取市场状态失败: {e}")
+            return {
+                'atr_pct': 2.0,
+                'current_price': 0,
+                'volatility': 'normal'
+            }
     
     def _get_existing_tp_sl_orders(self) -> List[Dict[str, Any]]:
         """获取现有止盈止损订单 - 完全复制原项目逻辑"""
