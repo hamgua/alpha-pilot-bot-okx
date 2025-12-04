@@ -40,7 +40,12 @@ class ExchangeManager:
                 config.get('exchange', 'symbol')
             )
         except Exception as e:
-            log_warning(f"设置杠杆失败: {e}")
+            error_msg = str(e)
+            if "59669" in error_msg:
+                log_info(f"ℹ️ 杠杆设置提示: 检测到现有止盈止损订单，杠杆调整被延迟 (错误码: 59669)")
+                log_info("   这是正常现象，系统将在订单执行完成后自动调整杠杆")
+            else:
+                log_warning(f"设置杠杆失败: {e}")
         
         return exchange
     

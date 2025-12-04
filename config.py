@@ -177,13 +177,22 @@ class ConfigManager:
                     'max_daily_trades': 3,  # 最大日交易次数
                     'min_position_hold_time': 30,  # 最小持仓时间(分钟)
                     'market_condition_filter': 'all',  # 适用所有市场条件
-                    'signal_confirmation': 'strict'  # 严格信号确认
+                    'signal_confirmation': 'strict',  # 严格信号确认
+                    # 新增：完全符合设计文档的行为逻辑参数
+                    'initial_position_ratio': 0.3,  # 初始仓位30%（20-40%范围）
+                    'add_position_ratio': 0.0,  # 不加仓
+                    'trend_strength_threshold': 0.0,  # 趋势强度阈值（不适用）
+                    'use_trailing_stop': False,  # 不使用移动止盈
+                    'trailing_stop_pct': 0.0,  # 移动止盈百分比
+                    'consolidation_volatility_threshold': 0.01,  # 横盘波动阈值1%
+                    'consolidation_signal_count': 4,  # 连续4次HOLD信号
+                    'consolidation_time_window': 120,  # 横盘时间窗口2小时
                 },
                 'moderate': {
                     'enabled': True,
                     'name': '中等型策略',
-                    'description': '趋势/波段交易，中等风险，抓趋势 - 基于30分钟K线，趋势跟随，波段操作',
-                    'kline_period': '30m',  # 主要使用30分钟K线
+                    'description': '趋势/波段交易，中等风险，抓趋势 - 基于10分钟K线，趋势跟随，波段操作',
+                    'kline_period': '10m',  # 主要使用10分钟K线
                     'trend_indicators': ['MA20', 'MA120', 'MACD', 'RSI', 'Bollinger'],
                     'volatility_threshold': 0.015,  # 波动宽度 1.5%
                     'take_profit_pct': 0.09,  # 止盈 9%
@@ -202,7 +211,15 @@ class ConfigManager:
                     'market_condition_filter': 'trending',  # 适用于趋势市场
                     'signal_confirmation': 'moderate',  # 中等信号确认
                     'trend_strength_threshold': 0.6,  # 趋势强度阈值
-                    'add_position_on_trend': True  # 趋势确认后加仓
+                    'add_position_on_trend': True,  # 趋势确认后加仓
+                    # 新增：完全符合设计文档的行为逻辑参数
+                    'initial_position_ratio': 0.55,  # 初始仓位55%（50-60%范围）
+                    'add_position_ratio': 0.15,  # 加仓15%（10-20%范围）
+                    'use_trailing_stop': False,  # 不使用移动止盈
+                    'trailing_stop_pct': 0.0,  # 移动止盈百分比
+                    'consolidation_volatility_threshold': 0.015,  # 横盘波动阈值1.5%
+                    'consolidation_signal_count': 4,  # 连续4次HOLD信号
+                    'consolidation_time_window': 120,  # 横盘时间窗口2小时
                 },
                 'aggressive': {
                     'enabled': True,
@@ -230,7 +247,13 @@ class ConfigManager:
                     'use_trailing_stop': True,  # 使用移动止盈
                     'trailing_stop_pct': 0.03,  # 移动止盈3%
                     'pyramiding': True,  # 允许金字塔加仓
-                    'max_pyramid_levels': 3  # 最大金字塔层数
+                    'max_pyramid_levels': 3,  # 最大金字塔层数
+                    # 新增：完全符合设计文档的行为逻辑参数
+                    'initial_position_ratio': 0.7,  # 初始仓位70%（60-80%范围）
+                    'add_position_ratio': 0.25,  # 加仓25%（趋势越强越加仓）
+                    'consolidation_volatility_threshold': 0.02,  # 横盘波动阈值2%
+                    'consolidation_signal_count': 4,  # 连续4次HOLD信号
+                    'consolidation_time_window': 120,  # 横盘时间窗口2小时
                 }
             },
             'smart_tp_sl': {

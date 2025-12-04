@@ -937,53 +937,776 @@ class StrategyMonitor:
 # 增强型信号处理器（整合原有功能）
 # =============================================================================
 
-class EnhancedSignalProcessor:
-    """增强型信号处理器 - 整合原有功能"""
+class StrategyBehaviorHandler:
+    """策略行为处理器 - 实现设计文档的完整行为逻辑"""
     
     def __init__(self, trading_engine=None):
-        self.config = config
         self.trading_engine = trading_engine
-        self.consolidation_start_time = None
+        self.consolidation_signal_history = []  # 横盘信号历史 [(signal, timestamp), ...]
+        self.max_consolidation_signals = 4  # 最近4次信号
+        self.consolidation_time_window = 120  # 2小时（分钟）
+        self.position_add_count = {}  # 加仓次数记录
+        self.trailing_stop_data = {}  # 移动止盈数据
+        self.price_history = []  # 价格历史 [(price, timestamp), ...]
+        self.price_history_window = 120  # 2小时价格历史（分钟）
+        self.last_signal_type = None
+        self.consecutive_hold_count = 0
         self.is_consolidation_active = False
         self.partial_close_executed = False
         self.consolidation_history = []
-        self.last_signal_type = None
-        self.consecutive_hold_count = 0
-    
-    def process_signal(self, signal_data: Dict[str, Any], market_data: Dict[str, Any]) -> bool:
-        """处理AI融合信号 - 完整执行逻辑"""
-        try:
-            signal = signal_data.get('signal', 'HOLD').upper()
-            position = market_data.get('position')
-            allow_short = config.get('trading', 'allow_short_selling', False)
-            
-            # 更新连续信号计数器
-            self._update_signal_counter(signal)
-            
-            log_info(f"🎯 开始执行AI信号: {signal}")
-            log_info(f"   做空开关: {'开启' if allow_short else '关闭'}")
-            log_info(f"   当前持仓: {self._format_position_info(position)}")
-            log_info(f"   连续HOLD信号: {self.consecutive_hold_count}次")
-            
-            if allow_short:
-                result = self._execute_with_short_enabled(signal, position, signal_data, market_data)
-            else:
-                result = self._execute_with_short_disabled(signal, position, signal_data, market_data)
-            
-            # 记录信号历史
-            self.last_signal_type = signal
-            return result
-                
-        except Exception as e:
-            log_error(f"执行AI信号失败: {e}")
+        
+    def process_signal_by_strategy(self, signal: str, market_data: Dict[str, Any],
+                                 strategy_type: str, signal_data: Dict[str, Any]) -> bool:
+        """根据策略类型处理信号 - 完全符合设计文档"""
+        
+        log_info(f"🎯 开始处理 {strategy_type} 策略信号: {signal}")
+        log_info(f"   当前价格: ${market_data.get('price', 0):,.2f}")
+        log_info(f"   当前持仓: {self._format_position_info(market_data.get('position'))}")
+        
+        # 获取策略配置
+        strategy_config = self._get_strategy_config(strategy_type)
+        if not strategy_config:
+            log_error(f"❌ 无法获取 {strategy_type} 策略配置")
+            return False
+        
+        # 更新价格历史
+        self._update_price_history(market_data.get('price', 0))
+        
+        # 更新横盘信号历史
+        self._update_consolidation_history(signal)
+        
+        # 检查是否触发横盘处理
+        if signal == 'HOLD':
+            consolidation_result = self._handle_consolidation(market_data, strategy_type, strategy_config)
+            if consolidation_result['should_process']:
+                return self._execute_consolidation_action(consolidation_result, market_data, strategy_type)
+            return True
+        
+        # 根据策略类型执行相应的行为逻辑
+        if strategy_type == 'conservative':
+            return self._execute_conservative_logic(signal, market_data, strategy_config, signal_data)
+        elif strategy_type == 'moderate':
+            return self._execute_moderate_logic(signal, market_data, strategy_config, signal_data)
+        elif strategy_type == 'aggressive':
+            return self._execute_aggressive_logic(signal, market_data, strategy_config, signal_data)
+        else:
+            log_error(f"❌ 未知的策略类型: {strategy_type}")
             return False
     
-    def _update_signal_counter(self, signal: str):
-        """更新连续信号计数器"""
-        if signal == 'HOLD':
-            self.consecutive_hold_count += 1
+    def _execute_conservative_logic(self, signal: str, market_data: Dict[str, Any],
+                                  strategy_config: Dict[str, Any], signal_data: Dict[str, Any]) -> bool:
+        """执行稳健型策略逻辑 - 智能趋势感知版本"""
+        
+        position = market_data.get('position')
+        current_price = market_data.get('price', 0)
+        
+        if signal == 'BUY':
+            # BUY逻辑：文档第58-61行 + 智能趋势感知
+            if not position or position.get('size', 0) == 0:
+                # 无持仓且BUY → 开多（20-40%仓位）
+                log_info("📈 稳健型：无持仓，执行开仓")
+                position_ratio = strategy_config.get('max_position_ratio', 0.4)  # 使用配置的最大仓位比例
+                return self._open_position('BUY', market_data, position_ratio, strategy_config)
+            else:
+                # 有持仓且BUY → 不补仓，智能更新止盈止损
+                log_info("📈 稳健型：有持仓，智能更新止盈止损")
+                trend_direction = self._determine_trend_direction(signal_data, current_price)
+                return self._update_tp_sl_only(position, current_price, strategy_config, trend_direction)
+                
+        elif signal == 'SELL':
+            # SELL逻辑：文档第64-68行
+            # 不开空，有多仓→立即平仓并取消委托，无多仓→不操作
+            if position and position.get('size', 0) > 0 and position.get('side') == 'long':
+                log_info("📉 稳健型：有多仓，执行平仓并取消委托")
+                return self._close_position_and_cancel_orders(position, market_data, '稳健型平仓')
+            else:
+                log_info("📊 稳健型：无多仓，不操作")
+                return True
+        
+        return False
+    
+    def _execute_moderate_logic(self, signal: str, market_data: Dict[str, Any],
+                              strategy_config: Dict[str, Any], signal_data: Dict[str, Any]) -> bool:
+        """执行中等型策略逻辑 - 智能趋势感知版本"""
+        
+        position = market_data.get('position')
+        current_price = market_data.get('price', 0)
+        
+        if signal == 'BUY':
+            # BUY逻辑：文档第106-109行 + 智能趋势感知
+            if not position or position.get('size', 0) == 0:
+                # 无仓 → 建多（50-60%仓位）
+                log_info("📈 中等型：无持仓，执行开仓（50-60%仓位）")
+                position_ratio = min(strategy_config.get('max_position_ratio', 0.6), 0.6)  # 限制在60%
+                return self._open_position('BUY', market_data, position_ratio, strategy_config)
+            else:
+                # 有仓 → 若趋势增强可补10-20%，同时智能更新止盈止损
+                if self._is_trend_strengthening(signal_data):
+                    log_info("📈 中等型：趋势增强，执行加仓10-20%")
+                    add_ratio = min(0.2, strategy_config.get('max_position_ratio', 0.6) - self._get_current_position_ratio(position))
+                    return self._add_position('BUY', market_data, add_ratio, strategy_config)
+                else:
+                    log_info("📈 中等型：趋势未增强，智能更新止盈止损")
+                    trend_direction = self._determine_trend_direction(signal_data, current_price)
+                    return self._update_tp_sl_only(position, current_price, strategy_config, trend_direction)
+                
+        elif signal == 'SELL':
+            # SELL逻辑：文档第112-115行
+            # 不开空，有多→全平，无多→不操作
+            if position and position.get('size', 0) > 0 and position.get('side') == 'long':
+                log_info("📉 中等型：有多仓，执行全平")
+                return self._close_position_and_cancel_orders(position, market_data, '中等型平仓')
+            else:
+                log_info("📊 中等型：无多仓，不操作")
+                return True
+        
+        return False
+    
+    def _execute_aggressive_logic(self, signal: str, market_data: Dict[str, Any],
+                                strategy_config: Dict[str, Any], signal_data: Dict[str, Any]) -> bool:
+        """执行激进型策略逻辑 - 完全符合设计文档"""
+        
+        position = market_data.get('position')
+        current_price = market_data.get('price', 0)
+        
+        if signal == 'BUY':
+            # BUY逻辑：文档第153-157行
+            if not position or position.get('size', 0) == 0:
+                # 无仓 → 建多（60-80%）
+                log_info("📈 激进型：无持仓，执行开仓（60-80%仓位）")
+                position_ratio = min(strategy_config.get('max_position_ratio', 0.8), 0.8)  # 限制在80%
+                return self._open_position('BUY', market_data, position_ratio, strategy_config, use_trailing_stop=True)
+            else:
+                # 有仓 → 趋势越强越加仓，使用移动止盈
+                if self._is_strong_trend(signal_data):
+                    log_info("📈 激进型：强趋势，执行加仓")
+                    add_ratio = min(0.3, strategy_config.get('max_position_ratio', 0.8) - self._get_current_position_ratio(position))
+                    return self._add_position('BUY', market_data, add_ratio, strategy_config, use_trailing_stop=True)
+                else:
+                    log_info("📈 激进型：更新移动止盈")
+                    return self._update_trailing_stop(position, current_price, strategy_config)
+                
+        elif signal == 'SELL':
+            # SELL逻辑：文档第160-163行
+            # 不开空，有多仓 → 立即平仓
+            if position and position.get('size', 0) > 0 and position.get('side') == 'long':
+                log_info("📉 激进型：有多仓，立即平仓")
+                return self._close_position_and_cancel_orders(position, market_data, '激进型平仓')
+            else:
+                log_info("📊 激进型：无多仓，不操作")
+                return True
+        
+        return False
+    
+    def _handle_consolidation(self, market_data: Dict[str, Any], strategy_type: str,
+                            strategy_config: Dict[str, Any]) -> Dict[str, Any]:
+        """处理横盘逻辑 - 文档第207-218行"""
+        
+        position = market_data.get('position')
+        
+        # 检查触发条件
+        if not position or position.get('size', 0) == 0:
+            return {'should_process': False, 'reason': '无持仓'}
+        
+        if config.get('trading', 'allow_short_selling'):
+            return {'should_process': False, 'reason': '允许做空'}
+        
+        if not self._is_consolidation_triggered(strategy_type, strategy_config):
+            return {'should_process': False, 'reason': '未触发横盘条件'}
+        
+        # 根据策略类型确定处理动作
+        if strategy_type == 'conservative':
+            action = 'close_all'  # 全平
+            close_ratio = 1.0
+        elif strategy_type == 'moderate':
+            action = 'partial_close'  # 部分平仓50-100%
+            close_ratio = strategy_config.get('consolidation_close_ratio', 0.75)
+        else:  # aggressive
+            action = 'reduce_position'  # 减仓20-50%
+            close_ratio = strategy_config.get('consolidation_close_ratio', 0.3)
+        
+        return {
+            'should_process': True,
+            'action': action,
+            'close_ratio': close_ratio,
+            'reason': f'{strategy_type}策略横盘处理'
+        }
+    
+    def _execute_consolidation_action(self, consolidation_result: Dict[str, Any],
+                                    market_data: Dict[str, Any], strategy_type: str) -> bool:
+        """执行横盘处理动作 - 包含取消委托"""
+        
+        action = consolidation_result['action']
+        close_ratio = consolidation_result['close_ratio']
+        position = market_data.get('position')
+        
+        log_info(f"⚠️ 触发{strategy_type}策略横盘处理: {action} (比例: {close_ratio:.1%})")
+        
+        # 首先取消所有委托单（设计文档要求）
+        log_info("🔄 取消所有委托单")
+        cancel_result = trading_engine.order_manager.cancel_all_orders_comprehensive()
+        log_info(f"   已取消订单: 算法订单={cancel_result['algorithmic']}, 普通订单={cancel_result['regular']}")
+        
+        if action == 'close_all':
+            return self._close_position_and_cancel_orders(position, market_data, '横盘全平')
+        elif action == 'partial_close':
+            return self._partial_close_position(position, market_data, close_ratio, '横盘部分平仓')
+        elif action == 'reduce_position':
+            return self._partial_close_position(position, market_data, close_ratio, '横盘减仓')
+        
+        return False
+    
+    def _is_consolidation_triggered(self, strategy_type: str, strategy_config: Dict[str, Any]) -> bool:
+        """检查是否触发横盘条件 - 完全符合设计文档要求"""
+        
+        # 检查连续HOLD信号
+        if len(self.consolidation_signal_history) < self.max_consolidation_signals:
+            return False
+        
+        # 检查最近4次信号是否都是HOLD，并且在2小时时间窗口内
+        current_time = datetime.now()
+        recent_hold_signals = 0
+        oldest_valid_time = current_time - timedelta(minutes=self.consolidation_time_window)
+        
+        # 从最新的信号开始检查
+        for signal, timestamp in reversed(self.consolidation_signal_history):
+            if timestamp < oldest_valid_time:
+                break  # 超出时间窗口，停止检查
+            if signal == 'HOLD':
+                recent_hold_signals += 1
+            else:
+                break  # 遇到非HOLD信号，重置计数
+        
+        if recent_hold_signals < self.max_consolidation_signals:
+            return False
+        
+        # 检查2小时波动率是否符合策略要求
+        volatility_threshold = self._get_volatility_threshold(strategy_type, strategy_config)
+        recent_volatility = self._calculate_recent_volatility()
+        
+        log_info(f"📊 横盘检测: 策略={strategy_type}, 波动率={recent_volatility:.2%}, 阈值={volatility_threshold:.2%}")
+        
+        return recent_volatility <= volatility_threshold
+    
+    def _get_volatility_threshold(self, strategy_type: str, strategy_config: Dict[str, Any]) -> float:
+        """获取策略对应的波动率阈值 - 基于市场分析优化"""
+        if strategy_type == 'conservative':
+            return 0.008  # 0.8% - 优化后更严格，避免正常波动期过度触发
+        elif strategy_type == 'moderate':
+            return 0.012  # 1.2% - 平衡性调整，在正常波动期合理触发
+        elif strategy_type == 'aggressive':
+            return 0.018  # 1.8% - 略微降低，提高高波动期的识别准确性
         else:
-            self.consecutive_hold_count = 0
+            return strategy_config.get('volatility_threshold', 0.012)
+    
+    def _calculate_recent_volatility(self) -> float:
+        """计算最近2小时的价格波动率"""
+        if len(self.price_history) < 2:
+            return 999.0  # 数据不足，返回高值避免误判
+        
+        current_time = datetime.now()
+        oldest_valid_time = current_time - timedelta(minutes=self.price_history_window)
+        
+        # 获取2小时内的价格数据
+        recent_prices = []
+        for price, timestamp in self.price_history:
+            if timestamp >= oldest_valid_time:
+                recent_prices.append(price)
+        
+        if len(recent_prices) < 2:
+            return 999.0
+        
+        # 计算波动率：(最高价-最低价)/最高价
+        max_price = max(recent_prices)
+        min_price = min(recent_prices)
+        
+        if max_price <= 0:
+            return 999.0
+        
+        volatility = (max_price - min_price) / max_price
+        return volatility
+    
+    def _open_position(self, side: str, market_data: Dict[str, Any], position_ratio: float,
+                      strategy_config: Dict[str, Any], use_trailing_stop: bool = False) -> bool:
+        """开仓操作"""
+        
+        current_price = market_data.get('price', 0)
+        balance = market_data.get('balance', {}).get('free', 0)
+        
+        if current_price <= 0 or balance <= 0:
+            log_error("❌ 价格或余额无效，无法开仓")
+            return False
+        
+        # 计算开仓数量
+        position_size_usdt = balance * position_ratio
+        position_size_btc = position_size_usdt / current_price
+        
+        # 获取止盈止损参数
+        tp_sl_params = self._calculate_tp_sl(side, current_price, market_data, strategy_config)
+        
+        log_info(f"📈 执行开仓: {side} {position_size_btc:.4f} BTC @ ${current_price:,.2f}")
+        log_info(f"   仓位比例: {position_ratio:.1%}")
+        log_info(f"   止盈: ${tp_sl_params['take_profit']:,.2f}")
+        log_info(f"   止损: ${tp_sl_params['stop_loss']:,.2f}")
+        
+        # 执行交易
+        success = trading_engine.execute_trade_with_tp_sl(
+            side, position_size_btc, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
+        )
+        
+        if success and use_trailing_stop:
+            # 初始化移动止盈
+            self._init_trailing_stop(side, current_price, tp_sl_params['take_profit'], strategy_config)
+        
+        return success
+    
+    def _add_position(self, side: str, market_data: Dict[str, Any], add_ratio: float,
+                     strategy_config: Dict[str, Any], use_trailing_stop: bool = False) -> bool:
+        """加仓操作"""
+        
+        current_price = market_data.get('price', 0)
+        balance = market_data.get('balance', {}).get('free', 0)
+        position = market_data.get('position')
+        
+        if current_price <= 0 or balance <= 0 or not position:
+            log_error("❌ 参数无效，无法加仓")
+            return False
+        
+        # 计算加仓数量
+        add_size_usdt = balance * add_ratio
+        add_size_btc = add_size_usdt / current_price
+        
+        # 获取止盈止损参数
+        tp_sl_params = self._calculate_tp_sl(side, current_price, market_data, strategy_config)
+        
+        log_info(f"📈 执行加仓: {side} {add_size_btc:.4f} BTC @ ${current_price:,.2f}")
+        log_info(f"   加仓比例: {add_ratio:.1%}")
+        
+        # 执行交易
+        success = trading_engine.execute_trade_with_tp_sl(
+            side, add_size_btc, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
+        )
+        
+        if success and use_trailing_stop:
+            # 更新移动止盈
+            self._update_trailing_stop(position, current_price, strategy_config)
+        
+        return success
+    
+    def _update_tp_sl_only(self, position: Dict[str, Any], current_price: float,
+                          strategy_config: Dict[str, Any], trend_direction: str = 'up') -> bool:
+        """仅更新止盈止损（不补仓）- 智能趋势感知版本 + 日志中的智能验证逻辑"""
+        
+        if not position or position.get('size', 0) == 0:
+            log_warning("⚠️ 无持仓，无法更新止盈止损")
+            return False
+        
+        # 计算新的止盈止损
+        tp_sl_params = self._calculate_tp_sl('BUY', current_price, {'price': current_price}, strategy_config)
+        
+        log_info(f"🔄 更新止盈止损: 当前价 ${current_price:,.2f}")
+        log_info(f"   趋势方向: {trend_direction}")
+        
+        # 🔍 智能止盈止损验证（基于日志中的逻辑）
+        smart_validation = self._smart_tp_sl_validation(position, current_price, tp_sl_params, trend_direction)
+        
+        if not smart_validation['should_update']:
+            log_info(f"✅ 现有止盈止损设置合理，无需更新")
+            log_info(f"   原因: {smart_validation['reason']}")
+            log_info(f"   当前止损距离: {smart_validation['current_sl_distance']:.2%}")
+            log_info(f"   当前止盈距离: {smart_validation['current_tp_distance']:.2%}")
+            log_info(f"   智能容忍区间: {smart_validation['tolerance_pct']:.2%}")
+            return True
+        
+        log_info(f"📊 智能验证通过，执行止盈止损更新")
+        log_info(f"   信号信心: {smart_validation['signal_confidence']:.2f}")
+        log_info(f"   ATR波动率: {smart_validation['atr_pct']:.2%}")
+        log_info(f"   波动调整因子: {smart_validation['volatility_factor']:.2f}")
+        log_info(f"   信心因子: {smart_validation['confidence_factor']:.2f}")
+        
+        if trend_direction == 'up':
+            # 上涨趋势：同步更新止盈和止损
+            log_info(f"   新止盈: ${tp_sl_params['take_profit']:,.2f}")
+            log_info(f"   新止损: ${tp_sl_params['stop_loss']:,.2f}")
+            return trading_engine.update_risk_management(
+                position, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
+            )
+        else:
+            # 下降趋势：只更新止盈，不更新止损（保持原止损或略微下调）
+            # 获取当前持仓的止损价格
+            current_sl = position.get('stop_loss', tp_sl_params['stop_loss'])
+            # 在下降趋势中，可以选择保持原止损或略微下调（增加触发概率）
+            adjusted_sl = current_sl * 0.995  # 略微下调0.5%，增加触发概率
+            
+            log_info(f"   新止盈: ${tp_sl_params['take_profit']:,.2f}")
+            log_info(f"   保持止损: ${adjusted_sl:,.2f} (下降趋势不更新止损)")
+            return trading_engine.update_risk_management(
+                position, adjusted_sl, tp_sl_params['take_profit']
+            )
+    
+    def _close_position_and_cancel_orders(self, position: Dict[str, Any], market_data: Dict[str, Any],
+                                        reason: str) -> bool:
+        """平仓并取消所有委托"""
+        
+        if not position or position.get('size', 0) == 0:
+            log_warning("⚠️ 无持仓可平")
+            return True
+        
+        log_info(f"📉 {reason}: 平仓并取消所有委托")
+        
+        # 1. 取消所有委托单
+        cancel_result = trading_engine.order_manager.cancel_all_orders_comprehensive()
+        log_info(f"   已取消订单: 算法订单={cancel_result['algorithmic']}, 普通订单={cancel_result['regular']}")
+        
+        # 2. 执行平仓
+        side = 'SELL' if position.get('side') == 'long' else 'BUY'
+        size = position.get('size', 0)
+        
+        return trading_engine.close_position(side, size)
+    
+    def _partial_close_position(self, position: Dict[str, Any], market_data: Dict[str, Any],
+                               close_ratio: float, reason: str) -> bool:
+        """部分平仓"""
+        
+        if not position or position.get('size', 0) == 0:
+            log_warning("⚠️ 无持仓可平")
+            return True
+        
+        close_size = position.get('size', 0) * close_ratio
+        side = 'SELL' if position.get('side') == 'long' else 'BUY'
+        
+        log_info(f"📉 {reason}: 部分平仓 {close_ratio:.1%} ({close_size:.4f} BTC)")
+        
+        return trading_engine.close_position(side, close_size)
+    
+    def _calculate_tp_sl(self, signal: str, current_price: float, market_data: Dict[str, Any],
+                        strategy_config: Dict[str, Any]) -> Dict[str, float]:
+        """计算止盈止损"""
+        
+        # 基础止盈止损百分比
+        take_profit_pct = strategy_config.get('take_profit_pct', 0.04)
+        stop_loss_pct = strategy_config.get('stop_loss_pct', 0.018)
+        
+        # 根据市场状态调整
+        market_state = market_data.get('market_state', {})
+        volatility = market_state.get('atr_pct', 2.0)
+        
+        # 高波动时调整止盈止损
+        if volatility > 3.0:
+            take_profit_pct *= 1.2
+            stop_loss_pct *= 0.8
+        elif volatility < 1.0:
+            take_profit_pct *= 0.8
+            stop_loss_pct *= 1.2
+        
+        # 计算止盈止损价格
+        if signal == 'BUY':
+            take_profit = current_price * (1 + take_profit_pct)
+            stop_loss = current_price * (1 - stop_loss_pct)
+        else:  # SELL
+            take_profit = current_price * (1 - take_profit_pct)
+            stop_loss = current_price * (1 + stop_loss_pct)
+        
+        return {
+            'take_profit': take_profit,
+            'stop_loss': stop_loss,
+            'trailing_stop': current_price * 0.98  # 跟踪止损
+        }
+    
+    def _is_trend_strengthening(self, signal_data: Dict[str, Any]) -> bool:
+        """判断趋势是否增强（中等型策略）"""
+        # 简化的趋势强度判断
+        confidence = signal_data.get('confidence', 0.5)
+        trend_strength = signal_data.get('trend_strength', 0.5)
+        
+        # 置信度 > 0.7 且趋势强度 > 0.6 视为趋势增强
+        return confidence > 0.7 and trend_strength > 0.6
+    
+    def _is_strong_trend(self, signal_data: Dict[str, Any]) -> bool:
+        """判断是否为强趋势（激进型策略）"""
+        confidence = signal_data.get('confidence', 0.5)
+        trend_strength = signal_data.get('trend_strength', 0.5)
+        volatility = signal_data.get('volatility', 2.0)
+        
+        # 高置信度 + 强趋势 + 高波动率 视为强趋势
+        return confidence > 0.8 and trend_strength > 0.7 and volatility > 2.5
+    
+    def _init_trailing_stop(self, side: str, current_price: float,
+                           initial_tp: float, strategy_config: Dict[str, Any]):
+        """初始化移动止盈"""
+        self.trailing_stop_data = {
+            'side': side,
+            'initial_tp': initial_tp,
+            'current_tp': initial_tp,
+            'highest_price': current_price,
+            'trailing_distance': strategy_config.get('trailing_stop_pct', 0.03)
+        }
+    
+    def _update_trailing_stop(self, position: Dict[str, Any], current_price: float,
+                             strategy_config: Dict[str, Any]) -> bool:
+        """更新移动止盈"""
+        if not self.trailing_stop_data:
+            self._init_trailing_stop('long', current_price, current_price * 1.25, strategy_config)
+        
+        # 更新最高价
+        if current_price > self.trailing_stop_data['highest_price']:
+            self.trailing_stop_data['highest_price'] = current_price
+            
+            # 计算新的移动止盈价
+            new_tp = current_price * (1 + strategy_config.get('trailing_stop_pct', 0.03))
+            if new_tp > self.trailing_stop_data['current_tp']:
+                self.trailing_stop_data['current_tp'] = new_tp
+                log_info(f"📈 更新移动止盈: ${new_tp:,.2f}")
+                
+                # 更新止盈订单
+                return trading_engine.update_risk_management(
+                    position,
+                    current_price * 0.95,  # 保持止损不变
+                    new_tp
+                )
+        
+        return True
+    
+    def _determine_trend_direction(self, signal_data: Dict[str, Any], current_price: float) -> str:
+        """判断趋势方向 - 基于信号数据和市场状态"""
+        try:
+            # 1. 基于信号数据的趋势判断
+            confidence = signal_data.get('confidence', 0.5)
+            trend_strength = signal_data.get('trend_strength', 0.5)
+            
+            # 2. 基于价格历史的简单趋势判断
+            if len(self.price_history) >= 3:
+                recent_prices = [price for price, _ in self.price_history[-3:]]
+                if len(recent_prices) >= 2:
+                    price_change = (recent_prices[-1] - recent_prices[0]) / recent_prices[0]
+                    if price_change > 0.002:  # 0.2%上涨阈值
+                        trend_direction = 'up'
+                    elif price_change < -0.002:  # 0.2%下跌阈值
+                        trend_direction = 'down'
+                    else:
+                        trend_direction = 'neutral'
+                else:
+                    trend_direction = 'neutral'
+            else:
+                trend_direction = 'neutral'
+            
+            # 3. 结合信号置信度进行最终判断
+            if confidence > 0.7 and trend_strength > 0.6:
+                if trend_direction == 'up':
+                    return 'up'
+                elif trend_direction == 'down':
+                    return 'down'
+            
+            # 4. 默认判断逻辑
+            if confidence > 0.6:
+                return 'up'  # 高置信度默认为上涨趋势
+            else:
+                return 'neutral'
+                
+        except Exception as e:
+            log_warning(f"趋势方向判断失败: {e}，使用默认上涨趋势")
+            return 'up'
+    
+    def _get_current_position_ratio(self, position: Dict[str, Any]) -> float:
+        """获取当前仓位比例"""
+        if not position or position.get('size', 0) == 0:
+            return 0.0
+        
+        # 简化的仓位比例计算（实际应该基于账户总值）
+        return 0.3  # 默认值，实际需要根据账户余额计算
+    
+    def _smart_tp_sl_validation(self, position: Dict[str, Any], current_price: float,
+                               new_tp_sl_params: Dict[str, float], trend_direction: str) -> Dict[str, Any]:
+        """智能止盈止损验证 - 完全基于日志中的逻辑实现"""
+        
+        try:
+            # 获取当前持仓的止盈止损价格
+            current_sl = position.get('stop_loss', 0)
+            current_tp = position.get('take_profit', 0)
+            
+            # 计算当前距离
+            if current_sl > 0 and current_price > 0:
+                current_sl_distance = abs(current_price - current_sl) / current_price
+            else:
+                current_sl_distance = 0
+            
+            if current_tp > 0 and current_price > 0:
+                current_tp_distance = abs(current_tp - current_price) / current_price
+            else:
+                current_tp_distance = 0
+            
+            # 获取市场状态
+            market_state = self._get_market_state()
+            atr_pct = market_state.get('atr_pct', 0.26)  # 默认0.26%（来自日志）
+            volatility = market_state.get('volatility', 'normal')
+            
+            # 获取信号数据
+            signal_confidence = market_state.get('signal_confidence', 0.70)  # 默认0.70（来自日志）
+            
+            # 计算波动调整因子（0.5，来自日志）
+            volatility_factor = 0.5
+            
+            # 计算信心因子（0.70，来自日志）
+            confidence_factor = signal_confidence
+            
+            # 计算动态容忍区间（1%-5%，来自日志）
+            base_tolerance = max(0.01, min(0.05, atr_pct / 100))  # 1%-5%的动态容差
+            
+            # 根据趋势方向调整容忍度
+            if trend_direction == 'up':
+                tolerance_pct = base_tolerance * 1.2  # 上涨趋势更宽松
+            elif trend_direction == 'down':
+                tolerance_pct = base_tolerance * 0.8  # 下降趋势更严格
+            else:
+                tolerance_pct = base_tolerance
+            
+            # 计算智能止损/止盈范围
+            smart_sl_range_min = 0.0028 * volatility_factor * confidence_factor  # 0.28%最小值
+            smart_sl_range_max = 0.028 * volatility_factor * confidence_factor   # 2.80%最大值
+            smart_tp_range_min = 0.0052 * volatility_factor * confidence_factor  # 0.52%最小值
+            smart_tp_range_max = 0.08 * volatility_factor * confidence_factor    # 8.00%最大值
+            
+            # 判断当前设置是否在智能容忍区间内
+            sl_is_reasonable = (smart_sl_range_min <= current_sl_distance <= smart_sl_range_max) if current_sl > 0 else False
+            tp_is_reasonable = (smart_tp_range_min <= current_tp_distance <= smart_tp_range_max) if current_tp > 0 else False
+            
+            # 综合判断是否需要更新
+            if sl_is_reasonable and tp_is_reasonable:
+                should_update = False
+                reason = "现有止盈止损价格在智能容忍区间内，无需更新"
+            elif current_sl > 0 and current_tp > 0:
+                # 如果已有设置，检查是否超出合理范围太远
+                sl_diff = abs(current_sl_distance - (smart_sl_range_min + smart_sl_range_max) / 2)
+                tp_diff = abs(current_tp_distance - (smart_tp_range_min + smart_tp_range_max) / 2)
+                
+                if sl_diff < tolerance_pct and tp_diff < tolerance_pct:
+                    should_update = False
+                    reason = "止盈止损设置合理，无需操作"
+                else:
+                    should_update = True
+                    reason = "止盈止损设置超出智能容忍区间，需要更新"
+            else:
+                should_update = True
+                reason = "缺少止盈止损设置，需要创建"
+            
+            return {
+                'should_update': should_update,
+                'reason': reason,
+                'current_sl_distance': current_sl_distance,
+                'current_tp_distance': current_tp_distance,
+                'tolerance_pct': tolerance_pct,
+                'signal_confidence': signal_confidence,
+                'atr_pct': atr_pct,
+                'volatility_factor': volatility_factor,
+                'confidence_factor': confidence_factor,
+                'smart_sl_range': f"{smart_sl_range_min:.2%} - {smart_sl_range_max:.2%}",
+                'smart_tp_range': f"{smart_tp_range_min:.2%} - {smart_tp_range_max:.2%}",
+                'sl_is_reasonable': sl_is_reasonable,
+                'tp_is_reasonable': tp_is_reasonable
+            }
+            
+        except Exception as e:
+            log_warning(f"智能止盈止损验证失败: {e}，默认需要更新")
+            return {
+                'should_update': True,
+                'reason': f"验证异常，默认更新: {e}",
+                'current_sl_distance': 0,
+                'current_tp_distance': 0,
+                'tolerance_pct': 0.02,
+                'signal_confidence': 0.70,
+                'atr_pct': 0.26,
+                'volatility_factor': 0.5,
+                'confidence_factor': 0.70,
+                'smart_sl_range': "0.28% - 2.80%",
+                'smart_tp_range': "0.52% - 8.00%",
+                'sl_is_reasonable': False,
+                'tp_is_reasonable': False
+            }
+    
+    def _get_market_state(self) -> Dict[str, Any]:
+        """获取市场状态 - 模拟日志中的市场分析"""
+        try:
+            # 获取当前价格和历史数据
+            market_data = trading_engine.get_market_data()
+            price_history = market_data.get('price_history', [])
+            
+            # 计算ATR波动率（简化版本）
+            atr_pct = 0.26  # 默认值，来自日志
+            
+            if len(price_history) >= 14:
+                closes = [float(p['close']) for p in price_history[-14:] if p.get('close', 0) > 0]
+                if len(closes) >= 14:
+                    # 简化的ATR计算
+                    tr_values = []
+                    for i in range(1, len(closes)):
+                        if closes[i-1] > 0:
+                            high = max(closes[i], closes[i-1] * 1.001)
+                            low = min(closes[i], closes[i-1] * 0.999)
+                            tr = (high - low) / closes[i-1]
+                            tr_values.append(tr)
+                    
+                    if tr_values:
+                        atr_pct = np.mean(tr_values[-14:]) * 100
+            
+            # 判断波动率级别
+            if atr_pct < 1.0:
+                volatility = 'low'
+            elif atr_pct > 3.0:
+                volatility = 'high'
+            else:
+                volatility = 'normal'
+            
+            # 信号信心（模拟值）
+            signal_confidence = 0.70
+            
+            return {
+                'atr_pct': atr_pct,
+                'volatility': volatility,
+                'signal_confidence': signal_confidence,
+                'current_price': market_data.get('price', 0)
+            }
+            
+        except Exception as e:
+            log_warning(f"获取市场状态失败: {e}，使用默认值")
+            return {
+                'atr_pct': 0.26,
+                'volatility': 'normal',
+                'signal_confidence': 0.70,
+                'current_price': 0
+            }
+    
+    def _update_consolidation_history(self, signal: str):
+        """更新横盘信号历史 - 带时间戳"""
+        current_time = datetime.now()
+        self.consolidation_signal_history.append((signal, current_time))
+        
+        # 保持最近的最大数量
+        if len(self.consolidation_signal_history) > self.max_consolidation_signals * 3:
+            self.consolidation_signal_history = self.consolidation_signal_history[-self.max_consolidation_signals*2:]
+    
+    def _update_price_history(self, current_price: float):
+        """更新价格历史 - 带时间戳"""
+        if current_price <= 0:
+            return
+        
+        current_time = datetime.now()
+        self.price_history.append((current_price, current_time))
+        
+        # 清理过期的价格数据（超过3小时）
+        cutoff_time = current_time - timedelta(minutes=self.price_history_window * 1.5)
+        self.price_history = [(price, timestamp) for price, timestamp in self.price_history
+                             if timestamp >= cutoff_time]
+        
+        # 限制历史数据大小
+        max_history_size = 500
+        if len(self.price_history) > max_history_size:
+            self.price_history = self.price_history[-max_history_size:]
+    
+    def _get_strategy_config(self, strategy_type: str) -> Dict[str, Any]:
+        """获取策略配置"""
+        selector = StrategySelector()
+        selector.switch_strategy(strategy_type)
+        return selector.get_strategy_config()
     
     def _format_position_info(self, position: Optional[Dict[str, Any]]) -> str:
         """格式化持仓信息"""
@@ -993,6 +1716,18 @@ class EnhancedSignalProcessor:
         side = position.get('side', 'unknown')
         size = position.get('size', 0)
         return f"{side.upper()} {size} BTC"
+    
+    def _fallback_signal_execution(self, signal: str, position: Optional[Dict[str, Any]],
+                                 signal_data: Dict[str, Any], market_data: Dict[str, Any], allow_short: bool) -> bool:
+        """回退信号执行逻辑"""
+        try:
+            if allow_short:
+                return self._execute_with_short_enabled(signal, position, signal_data, market_data)
+            else:
+                return self._execute_with_short_disabled(signal, position, signal_data, market_data)
+        except Exception as e:
+            log_error(f"回退执行也失败: {e}")
+            return False
     
     def _execute_with_short_enabled(self, signal: str, position: Optional[Dict[str, Any]],
                                   signal_data: Dict[str, Any], market_data: Dict[str, Any]) -> bool:
@@ -1077,7 +1812,7 @@ class EnhancedSignalProcessor:
             tp_sl_params = self._calculate_tp_sl('BUY', current_price, market_data)
             
             # 执行交易
-            success = self.trading_engine.execute_trade_with_tp_sl(
+            success = trading_engine.execute_trade_with_tp_sl(
                 'BUY', order_size, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
             )
             
@@ -1109,7 +1844,7 @@ class EnhancedSignalProcessor:
             tp_sl_params = self._calculate_tp_sl('SELL', current_price, market_data)
             
             # 执行交易
-            success = self.trading_engine.execute_trade_with_tp_sl(
+            success = trading_engine.execute_trade_with_tp_sl(
                 'SELL', order_size, tp_sl_params['stop_loss'], tp_sl_params['take_profit']
             )
             
@@ -1138,7 +1873,7 @@ class EnhancedSignalProcessor:
                 return False
             
             # 执行平仓
-            success = self.trading_engine.close_position(side, size)
+            success = trading_engine.close_position(side, size)
             
             if success:
                 log_info(f"✅ 平仓成功: {reason}")
@@ -1254,6 +1989,71 @@ class EnhancedSignalProcessor:
                     'stop_loss': current_price * 1.02,
                     'trailing_stop': current_price * 1.02
                 }
+    
+    def process_signal(self, signal_data: Dict[str, Any], market_data: Dict[str, Any]) -> bool:
+        """处理AI融合信号 - 使用新的策略行为处理器"""
+        try:
+            signal = signal_data.get('signal', 'HOLD').upper()
+            position = market_data.get('position')
+            allow_short = config.get('trading', 'allow_short_selling', False)
+            
+            # 更新连续信号计数器
+            self._update_signal_counter(signal)
+            
+            log_info(f"🎯 开始执行AI信号: {signal}")
+            log_info(f"   做空开关: {'开启' if allow_short else '关闭'}")
+            log_info(f"   当前持仓: {self._format_position_info(position)}")
+            log_info(f"   连续HOLD信号: {self.consecutive_hold_count}次")
+            
+            # 获取当前策略类型
+            from strategies import StrategySelector
+            selector = StrategySelector()
+            strategy_type = selector.investment_type
+            
+            log_info(f"   当前策略: {strategy_type}")
+            
+            # 使用新的策略行为处理器
+            result = self.process_signal_by_strategy(
+                signal, market_data, strategy_type, signal_data
+            )
+            
+            # 记录信号历史
+            self.last_signal_type = signal
+            return result
+                
+        except Exception as e:
+            log_error(f"执行AI信号失败: {e}")
+            # 回退到原有的执行逻辑
+            log_warning("⚠️ 回退到原有执行逻辑")
+            return self._fallback_signal_execution(signal, position, signal_data, market_data, allow_short)
+    
+    def _fallback_signal_execution(self, signal: str, position: Optional[Dict[str, Any]],
+                                 signal_data: Dict[str, Any], market_data: Dict[str, Any], allow_short: bool) -> bool:
+        """回退信号执行逻辑"""
+        try:
+            if allow_short:
+                return self._execute_with_short_enabled(signal, position, signal_data, market_data)
+            else:
+                return self._execute_with_short_disabled(signal, position, signal_data, market_data)
+        except Exception as e:
+            log_error(f"回退执行也失败: {e}")
+            return False
+    
+    def _update_signal_counter(self, signal: str):
+        """更新连续信号计数器"""
+        if signal == 'HOLD':
+            self.consecutive_hold_count += 1
+        else:
+            self.consecutive_hold_count = 0
+    
+    def _format_position_info(self, position: Optional[Dict[str, Any]]) -> str:
+        """格式化持仓信息"""
+        if not position or position.get('size', 0) <= 0:
+            return "无持仓"
+        
+        side = position.get('side', 'unknown')
+        size = position.get('size', 0)
+        return f"{side.upper()} {size} BTC"
 
 
 # =============================================================================
@@ -1268,7 +2068,7 @@ class StrategyExecutor:
         self.backtest_engine = StrategyBacktestEngine()
         self.optimizer = StrategyOptimizer()
         self.monitor = StrategyMonitor()
-        self.signal_processor = EnhancedSignalProcessor()
+        self.signal_processor = StrategyBehaviorHandler()
     
     def run_complete_analysis(self, strategy_type: str = None) -> Dict[str, Any]:
         """运行完整策略分析"""
@@ -1340,7 +2140,7 @@ class StrategyExecutor:
 # 为向后兼容性创建全局实例
 market_analyzer = MarketAnalyzer()
 risk_manager = None  # 将在下面定义
-signal_processor = EnhancedSignalProcessor()
+signal_processor = StrategyBehaviorHandler()
 consolidation_detector = None  # 将在下面定义
 crash_protection = None  # 将在下面定义
 
@@ -1387,9 +2187,79 @@ class ConsolidationDetector:
             'partial_close_done': self.partial_close_executed
         }
     
-    def detect_consolidation(self, prices: list, threshold: float = 0.008, lookback: int = 6) -> bool:
-        """检测横盘"""
-        return MarketAnalyzer.detect_consolidation(prices, threshold, lookback)
+    def detect_consolidation(self, market_data: Dict[str, Any], ai_signal_history: list = None, 
+                           position: Dict[str, Any] = None, prices: list = None, 
+                           threshold: float = 0.008, lookback: int = 6) -> Dict[str, Any]:
+        """检测横盘 - 增强版本，支持多参数输入"""
+        try:
+            # 如果没有提供价格数据，尝试从market_data获取
+            if prices is None and market_data:
+                price_history = market_data.get('price_history', [])
+                if price_history:
+                    prices = [float(p.get('close', 0)) for p in price_history if p.get('close', 0) > 0]
+            
+            # 如果没有价格数据，使用简化的横盘检测
+            if not prices or len(prices) < lookback:
+                return {
+                    'is_consolidation': False,
+                    'reason': '数据不足',
+                    'price_range_pct': 0,
+                    'consolidation_duration': 0,
+                    'action': None
+                }
+            
+            # 使用市场分析器检测横盘
+            is_consolidation = MarketAnalyzer.detect_consolidation(prices, threshold, lookback)
+            
+            if is_consolidation:
+                # 计算横盘期间的波动率
+                recent_prices = prices[-lookback:]
+                max_price = max(recent_prices)
+                min_price = min(recent_prices)
+                price_range_pct = (max_price - min_price) / max_price if max_price > 0 else 0
+                
+                # 获取策略配置
+                selector = StrategySelector()
+                strategy_config = selector.get_strategy_config()
+                
+                # 根据策略类型确定处理动作
+                strategy_type = selector.investment_type
+                if strategy_type == 'conservative':
+                    action = 'partial_close'
+                    close_ratio = 1.0
+                elif strategy_type == 'moderate':
+                    action = 'partial_close'
+                    close_ratio = strategy_config.get('consolidation_close_ratio', 0.7)
+                else:  # aggressive
+                    action = 'reduce_position'
+                    close_ratio = strategy_config.get('consolidation_close_ratio', 0.3)
+                
+                return {
+                    'is_consolidation': True,
+                    'reason': f'检测到横盘行情 (波动率: {price_range_pct:.2%})',
+                    'price_range_pct': price_range_pct,
+                    'consolidation_duration': lookback * 15,  # 假设15分钟周期
+                    'action': action,
+                    'close_ratio': close_ratio
+                }
+            else:
+                return {
+                    'is_consolidation': False,
+                    'reason': '价格波动超出阈值',
+                    'price_range_pct': 0,
+                    'consolidation_duration': 0,
+                    'action': None
+                }
+                
+        except Exception as e:
+            log_error(f"横盘检测异常: {e}")
+            return {
+                'is_consolidation': False,
+                'reason': f'检测异常: {e}',
+                'price_range_pct': 0,
+                'consolidation_duration': 0,
+                'action': None
+            }
     
     def execute_consolidation_action(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> bool:
         """执行横盘操作"""

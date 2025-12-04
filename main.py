@@ -17,7 +17,7 @@ from config import config
 from trading import trading_engine
 from strategies import (
     MarketAnalyzer, StrategySelector, StrategyBacktestEngine,
-    StrategyOptimizer, StrategyMonitor, StrategyExecutor, EnhancedSignalProcessor,
+    StrategyOptimizer, StrategyMonitor, StrategyExecutor, StrategyBehaviorHandler,
     consolidation_detector, crash_protection, market_analyzer
 )
 from utils import (
@@ -688,7 +688,7 @@ class AlphaArenaBot:
                 return
             
             # 4. 初始化信号处理器
-            signal_processor = EnhancedSignalProcessor(trading_engine)
+            signal_processor = StrategyBehaviorHandler(trading_engine)
             
             # 5. 处理信号并执行交易决策
             log_info("🔍 处理交易信号...")
@@ -755,8 +755,8 @@ class AlphaArenaBot:
         """执行交易信号 - 使用增强型信号处理器"""
         try:
             # 使用增强型信号处理器
-            from strategies import EnhancedSignalProcessor
-            processor = EnhancedSignalProcessor(trading_engine)
+            from strategies import StrategyBehaviorHandler
+            processor = StrategyBehaviorHandler(trading_engine)
             
             # 执行完整的交易逻辑
             success = processor.process_signal(signal_data, market_data)
@@ -791,8 +791,8 @@ class AlphaArenaBot:
         
         # 使用信号处理器处理 - 修复未定义变量问题
         try:
-            from strategies import EnhancedSignalProcessor
-            signal_processor = EnhancedSignalProcessor(trading_engine)
+            from strategies import StrategyBehaviorHandler
+            signal_processor = StrategyBehaviorHandler(trading_engine)
             processed_signal = signal_processor.process_signal(signal_data, market_data)
             if processed_signal == False:  # 注意：process_signal返回bool，需要检查逻辑
                 log_info("📊 保持持仓，跳过交易")
