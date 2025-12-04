@@ -1,25 +1,63 @@
 """
 Alpha Pilot Bot OKX 配置管理模块
 将所有配置项集中管理，实现配置与业务逻辑的完全分离
+提供统一的配置访问接口和完整的错误处理机制
 """
 
 import os
 from dotenv import load_dotenv
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Union
+from dataclasses import dataclass
+from enum import Enum
 
 # 导入日志函数
 from utils import log_warning, log_error
 
 load_dotenv()
 
+class ConfigSection(Enum):
+    """配置段枚举"""
+    EXCHANGE = "exchange"
+    TRADING = "trading"
+    STRATEGIES = "strategies"
+    RISK = "risk"
+    AI = "ai"
+    SYSTEM = "system"
+
+@dataclass
+class ConfigValidationResult:
+    """配置验证结果"""
+    is_valid: bool
+    errors: list[str]
+    warnings: list[str]
+
 class ConfigManager:
-    """配置管理器 - 统一管理所有配置"""
+    """配置管理器 - 统一管理所有配置
+    
+    负责：
+    - 加载和验证所有配置项
+    - 提供统一的配置访问接口
+    - 处理配置错误和回退机制
+    - 支持运行时配置更新
+    """
     
     def __init__(self):
+        """初始化配置管理器"""
         self._config = self._load_all_config()
+        self._validation_result = self._validate_config()
+        
+        if not self._validation_result.is_valid:
+            log_error(f"配置验证失败: {self._validation_result.errors}")
+            raise ValueError("配置验证失败")
     
     def _load_all_config(self) -> Dict[str, Any]:
-        """加载所有配置"""
+        """加载所有配置
+        
+        从环境变量和默认值加载所有配置项
+        
+        Returns:
+            Dict[str, Any]: 完整的配置字典
+        """
         return {
             'exchange': self._load_exchange_config(),
             'trading': self._load_trading_config(),
@@ -30,7 +68,13 @@ class ConfigManager:
         }
     
     def _load_exchange_config(self) -> Dict[str, Any]:
-        """交易所配置 - 连接OKX交易所的核心参数"""
+        """交易所配置 - 连接OKX交易所的核心参数
+        
+        配置OKX交易所的连接参数，包括API密钥、交易对等
+        
+        Returns:
+            Dict[str, Any]: 交易所配置字典
+        """
         return {
             'exchange': 'okx',  # 交易所名称，固定为okx
             'api_key': os.getenv('OKX_API_KEY'),  # OKX API密钥 - 用于身份验证
@@ -43,7 +87,13 @@ class ConfigManager:
         }
     
     def _load_trading_config(self) -> Dict[str, Any]:
-        """交易配置 - 控制交易行为和风险参数"""
+        """交易配置 - 控制交易行为和风险参数
+        
+        配置交易相关的参数，包括仓位大小、杠杆、交易模式等
+        
+        Returns:
+            Dict[str, Any]: 交易配置字典
+        """
         return {
             'test_mode': os.getenv('TEST_MODE', 'true').lower() == 'true',  # 测试模式 - true为模拟交易，false为真实交易
             'max_position_size': float(os.getenv('MAX_POSITION_SIZE', '0.01')),  # 最大持仓量 - 最多持有的BTC数量
@@ -56,7 +106,13 @@ class ConfigManager:
         }
     
     def _load_strategy_config(self) -> Dict[str, Any]:
-        """策略配置 - 各种智能交易策略的参数设置"""
+        """策略配置 - 各种智能交易策略的参数设置
+        
+        配置各种交易策略的参数，包括横盘保护、信号策略、风险控制等
+        
+        Returns:
+            Dict[str, Any]: 策略配置字典
+        """
         return {
             'profit_lock_strategy': {
                 'enabled': True,  # 利润锁定策略开关 - true启用横盘利润保护
@@ -300,7 +356,13 @@ class ConfigManager:
         }
     
     def _load_risk_config(self) -> Dict[str, Any]:
-        """风险控制配置 - 管理整体风险暴露"""
+        """风险控制配置 - 管理整体风险暴露
+        
+        配置风险管理相关的参数，包括止损、止盈、追踪止损等
+        
+        Returns:
+            Dict[str, Any]: 风险控制配置字典
+        """
         return {
             'max_daily_loss': float(os.getenv('MAX_DAILY_LOSS', '100')),  # 最大日亏损 - 每日最多亏损100 USDT
             'max_position_risk': float(os.getenv('MAX_POSITION_RISK', '0.05')),  # 最大仓位风险 - 单笔交易风险不超过5%
@@ -315,7 +377,13 @@ class ConfigManager:
         }
     
     def _load_ai_config(self) -> Dict[str, Any]:
-        """AI配置 - 人工智能信号生成相关设置"""
+        """AI配置 - 人工智能信号生成相关设置
+        
+        配置AI信号生成相关的参数，包括API密钥、超时设置、缓存等
+        
+        Returns:
+            Dict[str, Any]: AI配置字典
+        """
         # 安全加载AI配置，提供完整的回退机制
         try:
             use_multi_ai = os.getenv('USE_MULTI_AI', 'false').lower() == 'true'
@@ -379,7 +447,13 @@ class ConfigManager:
             }
     
     def _load_system_config(self) -> Dict[str, Any]:
-        """系统配置 - 系统运行和监控相关设置"""
+        """系统配置 - 系统运行和监控相关设置
+        
+        配置系统运行相关的参数，包括日志级别、监控设置、Web界面等
+        
+        Returns:
+            Dict[str, Any]: 系统配置字典
+        """
         return {
             'max_history_length': 100,  # 最大历史长度 - 保留最近100条历史记录
             'log_level': os.getenv('LOG_LEVEL', 'INFO'),  # 日志级别 - DEBUG/INFO/WARNING/ERROR
@@ -396,14 +470,106 @@ class ConfigManager:
         }
     
     def get(self, section: str, key: str = None, default: Any = None) -> Any:
-        """获取配置值"""
+        """获取配置值
+        
+        获取指定配置段中的配置值
+        
+        Args:
+            section: 配置段名称
+            key: 配置键名称，如果为None则返回整个配置段
+            default: 默认值，如果配置不存在则返回此值
+            
+        Returns:
+            Any: 配置值或默认值
+        """
         if key is None:
             return self._config.get(section, {})
         return self._config.get(section, {}).get(key, default)
     
     def get_all(self) -> Dict[str, Any]:
-        """获取所有配置"""
+        """获取所有配置
+        
+        获取完整的配置字典
+        
+        Returns:
+            Dict[str, Any]: 所有配置
+        """
         return self._config
+
+    def _validate_config(self) -> ConfigValidationResult:
+        """验证配置完整性
+        
+        验证所有必需的配置项是否存在且有效
+        
+        Returns:
+            ConfigValidationResult: 验证结果
+        """
+        errors = []
+        warnings = []
+        
+        # 验证交易所配置
+        exchange_config = self._config.get('exchange', {})
+        required_exchange_keys = ['api_key', 'secret', 'password']
+        for key in required_exchange_keys:
+            if not exchange_config.get(key):
+                errors.append(f"交易所配置缺少必需项: {key}")
+        
+        # 验证交易配置
+        trading_config = self._config.get('trading', {})
+        if trading_config.get('max_position_size', 0) <= 0:
+            errors.append("交易配置: 最大仓位大小必须大于0")
+        
+        if trading_config.get('leverage', 0) <= 0:
+            errors.append("交易配置: 杠杆倍数必须大于0")
+        
+        # 验证AI配置
+        ai_config = self._config.get('ai', {})
+        if not ai_config.get('models'):
+            warnings.append("AI配置: 未配置任何AI模型，将使用回退模式")
+        
+        # 验证策略配置
+        strategies_config = self._config.get('strategies', {})
+        if not strategies_config.get('profit_lock_strategy', {}).get('enabled', False):
+            warnings.append("策略配置: 横盘利润锁定策略未启用")
+        
+        return ConfigValidationResult(
+            is_valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings
+        )
+    
+    def update_config(self, section: str, key: str, value: Any) -> bool:
+        """更新配置值
+        
+        在运行时更新配置值
+        
+        Args:
+            section: 配置段名称
+            key: 配置键名称
+            value: 新的配置值
+            
+        Returns:
+            bool: 更新是否成功
+        """
+        try:
+            if section in self._config:
+                self._config[section][key] = value
+                log_info(f"配置更新成功: {section}.{key} = {value}")
+                return True
+            else:
+                log_warning(f"配置段不存在: {section}")
+                return False
+        except Exception as e:
+            log_error(f"配置更新失败: {e}")
+            return False
+    
+    def get_validation_status(self) -> ConfigValidationResult:
+        """获取配置验证状态
+        
+        Returns:
+            ConfigValidationResult: 配置验证结果
+        """
+        return self._validation_result
 
 # 全局配置实例
 config = ConfigManager()

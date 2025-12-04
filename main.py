@@ -1,6 +1,7 @@
 """
 Alpha Pilot Bot OKX - 重构版主程序
 基于模块化架构的OKX自动交易系统
+实现AI驱动的自动化交易策略执行
 """
 
 import time
@@ -9,10 +10,12 @@ import json
 import numpy as np
 import concurrent.futures
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass
 
 # 导入模块
 import logging
+import asyncio
 from config import config
 from trading import trading_engine
 from strategies import (
@@ -21,26 +24,40 @@ from strategies import (
     consolidation_detector, crash_protection, market_analyzer
 )
 from utils import (
-    cache_manager, memory_manager, system_monitor, 
+    cache_manager, memory_manager, system_monitor,
     data_validator, json_helper, time_helper, logger_helper,
-    TradeLogger, DataManager, save_trade_record
+    TradeLogger, DataManager, save_trade_record, log_info, log_warning, log_error
 )
 from ai_client import ai_client
-# signal_executor模块已整合到strategies.py中
-import asyncio
 
-# 从utils导入统一的日志函数
-from utils import log_info, log_warning, log_error
+@dataclass
+class BotState:
+    """机器人状态数据结构"""
+    is_running: bool = False
+    current_cycle: int = 0
+    last_signal: Optional[Dict[str, Any]] = None
+    price_history: List[float] = None
+    signal_cache: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.price_history is None:
+            self.price_history = []
+        if self.signal_cache is None:
+            self.signal_cache = {}
 
 class AlphaArenaBot:
-    """Alpha Pilot Bot OKX 交易机器人主类"""
+    """Alpha Pilot Bot OKX 交易机器人主类
+    
+    负责协调整个交易系统的运行，包括：
+    - 市场数据获取和分析
+    - AI信号生成和处理
+    - 交易决策执行
+    - 风险管理和系统维护
+    """
     
     def __init__(self):
-        self.is_running = False
-        self.current_cycle = 0
-        self.last_signal = None
-        self.price_history = []
-        self.signal_cache = {}
+        """初始化交易机器人"""
+        self.state = BotState()
         self.data_manager = DataManager()
         
         log_info("🚀 Alpha Pilot Bot OKX 交易机器人初始化中...")
@@ -49,8 +66,11 @@ class AlphaArenaBot:
         # 初始化数据管理
         self._initialize_data_management()
     
-    def _display_startup_info(self):
-        """显示启动信息"""
+    def _display_startup_info(self) -> None:
+        """显示启动信息
+        
+        展示系统版本、特性和配置信息，帮助用户了解当前运行环境
+        """
         log_info("=" * 60)
         log_info("🎯 Alpha Pilot Bot OKX 自动交易系统 v2.0")
         log_info("=" * 60)
@@ -86,8 +106,14 @@ class AlphaArenaBot:
             
         log_info("=" * 60)
 
-    def _initialize_data_management(self):
-        """初始化数据管理"""
+    def _initialize_data_management(self) -> None:
+        """初始化数据管理系统
+        
+        负责：
+        - 加载历史数据摘要
+        - 清理过期数据
+        - 验证数据完整性
+        """
         try:
             log_info("📊 初始化数据管理系统...")
             
@@ -102,10 +128,22 @@ class AlphaArenaBot:
             log_info("📊 数据清理完成")
             
         except Exception as e:
-            log_error(f"数据管理初始化失败: {e}")
+            log_error(f"数据管理初始化失败: {type(e).__name__}: {e}")
+            # 记录详细错误信息用于调试
+            import traceback
+            log_error(f"数据管理初始化堆栈:\n{traceback.format_exc()}")
     
     def get_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """获取AI交易信号（增强版）"""
+        """获取AI交易信号（增强版）
+        
+        使用多线程方式安全地执行异步AI信号获取，提供完整的错误处理和回退机制
+        
+        Args:
+            market_data: 市场数据字典，包含价格、趋势、波动率等信息
+            
+        Returns:
+            Dict[str, Any]: AI信号数据，包含signal、confidence、reason等字段
+        """
         try:
             # 使用线程安全的方式运行异步函数
             import threading
@@ -136,7 +174,16 @@ class AlphaArenaBot:
             return self._get_fallback_signal_sync(market_data)
     
     async def _get_ai_signal_async(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """异步获取AI交易信号"""
+        """异步获取AI交易信号
+        
+        实现多层缓存机制，提高信号获取效率并减少API调用
+        
+        Args:
+            market_data: 市场数据字典
+            
+        Returns:
+            Dict[str, Any]: AI信号数据
+        """
         # 增强的缓存键 - 包含更多市场特征
         cache_key = self._generate_cache_key(market_data)
         
@@ -161,20 +208,37 @@ class AlphaArenaBot:
             return signal_data
             
         except Exception as e:
-            log_error(f"AI信号生成失败: {e}")
+            log_error(f"AI信号生成失败: {type(e).__name__}: {e}")
+            import traceback
+            log_error(f"AI信号生成堆栈:\n{traceback.format_exc()}")
             return await self._get_fallback_signal(market_data)
     
     def _generate_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """生成AI信号 - 已废弃，使用增强版本"""
+        """生成AI信号 - 已废弃，使用增强版本
+        
+        保持向后兼容性，直接调用增强版本
+        
+        Args:
+            market_data: 市场数据字典
+            
+        Returns:
+            Dict[str, Any]: AI信号数据
+        """
         # 直接调用增强版本以保持向后兼容性
         return self._generate_enhanced_ai_signal(market_data)
     
     def _analyze_simple_trend(self) -> float:
-        """简单趋势分析"""
-        if len(self.price_history) < 20:
+        """简单趋势分析
+        
+        使用线性回归计算价格趋势强度，并进行标准化处理
+        
+        Returns:
+            float: 趋势强度值，范围通常在-1到1之间
+        """
+        if len(self.state.price_history) < 20:
             return 0.0
         
-        recent = self.price_history[-20:]
+        recent = self.state.price_history[-20:]
         if len(recent) < 2:
             return 0.0
         
@@ -190,11 +254,17 @@ class AlphaArenaBot:
         return 0.0
     
     def _calculate_recent_volatility(self) -> float:
-        """计算近期波动率"""
-        if len(self.price_history) < 14:
+        """计算近期波动率
+        
+        基于价格历史计算平均价格变化率，用于评估市场波动程度
+        
+        Returns:
+            float: 波动率百分比，默认值为2.0%
+        """
+        if len(self.state.price_history) < 14:
             return 2.0
         
-        recent = self.price_history[-14:]
+        recent = self.state.price_history[-14:]
         if len(recent) < 2:
             return 2.0
         
@@ -205,7 +275,16 @@ class AlphaArenaBot:
         return np.mean(returns) * 100 if returns else 2.0
     
     def _create_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """创建回退信号"""
+        """创建回退信号
+        
+        当AI信号生成失败时，提供保守的回退信号
+        
+        Args:
+            market_data: 市场数据字典
+            
+        Returns:
+            Dict[str, Any]: 回退信号数据
+        """
         return {
             'signal': 'HOLD',
             'confidence': 0.5,
@@ -266,8 +345,8 @@ class AlphaArenaBot:
                 return False
             
             # 检查价格变化是否超过阈值
-            if len(self.price_history) >= 2:
-                current_price = self.price_history[-1]
+            if len(self.state.price_history) >= 2:
+                current_price = self.state.price_history[-1]
                 cached_price = cached_signal.get('market_context', {}).get('current_price', current_price)
                 if abs(current_price - cached_price) / cached_price > 0.02:  # 价格变化超过2%
                     return False
@@ -445,26 +524,36 @@ class AlphaArenaBot:
         return signal_age > config.get('ai', 'cache_duration')
     
     def analyze_market_state(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """分析市场状态"""
+        """分析市场状态
+        
+        综合分析当前市场状态，包括价格趋势、波动率、技术指标等
+        
+        Args:
+            market_data: 市场数据字典，包含价格、成交量、持仓等信息
+            
+        Returns:
+            Dict[str, Any]: 市场状态分析结果
+        """
         try:
             # 验证输入参数
             if not market_data or not isinstance(market_data, dict):
+                log_warning("⚠️ 市场数据无效，返回默认状态")
                 return {}
                 
             # 更新价格历史 - 添加数据验证
             current_price = market_data.get('price', 0)
             if current_price > 0:  # 验证价格有效性
                 # 检查价格异常值（单日波动超过20%视为异常）
-                if len(self.price_history) > 0:
-                    last_price = self.price_history[-1]
+                if len(self.state.price_history) > 0:
+                    last_price = self.state.price_history[-1]
                     if abs(current_price - last_price) / last_price > 0.2:
                         log_warning(f"⚠️ 检测到价格异常跳跃: {last_price} -> {current_price}")
                         # 可以选择不记录异常价格或使用平滑处理
                         current_price = last_price * 1.05 if current_price > last_price else last_price * 0.95
                 
-                self.price_history.append(current_price)
-                if len(self.price_history) > 100:
-                    self.price_history.pop(0)
+                self.state.price_history.append(current_price)
+                if len(self.state.price_history) > 100:
+                    self.state.price_history.pop(0)
             else:
                 log_warning("⚠️ 无效的价格数据，跳过价格历史更新")
 
@@ -472,7 +561,7 @@ class AlphaArenaBot:
             price_history = self._get_price_history_for_analysis()
 
             # 更新暴跌保护系统的价格历史
-            crash_protection.price_history = self.price_history[-20:]  # 保留最近20个价格
+            crash_protection.price_history = self.state.price_history[-20:]  # 保留最近20个价格
 
             # 使用真实的历史数据计算技术指标
             try:
@@ -503,7 +592,7 @@ class AlphaArenaBot:
                 atr_pct = 0.5
 
             # 识别趋势 - 使用收盘价数据
-            closes_for_trend = price_history.get('close', self.price_history)
+            closes_for_trend = price_history.get('close', self.state.price_history)
             trend_strength = market_analyzer.identify_trend(closes_for_trend)
 
             # 波动率分类
@@ -525,7 +614,7 @@ class AlphaArenaBot:
             if position and isinstance(position, dict):
                 try:
                     should_lock_profit = consolidation_detector.should_lock_profit(
-                        position, market_data, self.price_history
+                        position, market_data, self.state.price_history
                     )
                 except Exception:
                     should_lock_profit = False
@@ -562,12 +651,21 @@ class AlphaArenaBot:
                 'crash_protection': {'should_protect': False, 'reason': '分析异常'}
             }
     
-    def execute_trading_cycle(self):
-        """执行交易周期"""
+    def execute_trading_cycle(self) -> None:
+        """执行交易周期
+        
+        执行完整的交易周期，包括：
+        - 获取市场数据
+        - 分析市场状态
+        - 获取AI信号
+        - 执行交易决策
+        - 风险管理
+        - 系统维护
+        """
         try:
-            self.current_cycle += 1
+            self.state.current_cycle += 1
             log_info(f"{'='*60}")
-            log_info(f"🔄 第 {self.current_cycle} 轮交易周期开始")
+            log_info(f"🔄 第 {self.state.current_cycle} 轮交易周期开始")
             log_info(f"⏰ 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             log_info(f"{'='*60}")
             
@@ -1080,7 +1178,7 @@ class AlphaArenaBot:
             log_error(f"获取历史K线数据失败: {e}")
         
         # 回退到使用价格历史数据
-        if len(self.price_history) == 0:
+        if len(self.state.price_history) == 0:
             # 如果没有历史数据，提供默认值
             current_price = 50000  # 默认BTC价格
             log_warning("⚠️ 价格历史数据为空，使用默认值")
@@ -1091,7 +1189,7 @@ class AlphaArenaBot:
                 'volume': [1000000] * 6
             }
         
-        data_slice = self.price_history[-20:] if len(self.price_history) >= 20 else self.price_history
+        data_slice = self.state.price_history[-20:] if len(self.state.price_history) >= 20 else self.state.price_history
         
         log_info(f"📊 使用价格历史数据: {len(data_slice)} 条记录")
         if len(data_slice) < 6:
@@ -1116,21 +1214,21 @@ class AlphaArenaBot:
         cache_manager.cleanup_expired()
         
         # 清理价格历史缓存
-        if len(self.price_history) > 1000:
-            self.price_history = self.price_history[-500:]
+        if len(self.state.price_history) > 1000:
+            self.state.price_history = self.state.price_history[-500:]
         
         # 内存管理
-        if self.current_cycle % 10 == 0:  # 每10轮清理一次
+        if self.state.current_cycle % 10 == 0:  # 每10轮清理一次
             memory_stats = memory_manager.get_memory_stats()
             log_info(f"📊 内存统计: {memory_stats}")
         
         # 缓存管理
-        if self.current_cycle % 20 == 0:  # 每20轮检查一次
+        if self.state.current_cycle % 20 == 0:  # 每20轮检查一次
             cache_stats = cache_manager.get_stats()
             log_info(f"📊 缓存统计: {cache_stats}")
         
         # 系统监控
-        if self.current_cycle % 5 == 0:  # 每5轮更新一次
+        if self.state.current_cycle % 5 == 0:  # 每5轮更新一次
             system_stats = system_monitor.get_stats()
             log_info(f"📊 系统统计: {system_stats}")
         
@@ -1138,7 +1236,7 @@ class AlphaArenaBot:
         if self.current_cycle % 10 == 0:  # 每10轮保存一次
             try:
                 performance_metrics = {
-                    'cycle': self.current_cycle,
+                    'cycle': self.state.current_cycle,
                     'uptime': system_stats.get('uptime_seconds', 0),
                     'trades': system_stats.get('trades', 0),
                     'errors': system_stats.get('errors', 0),
@@ -1151,7 +1249,7 @@ class AlphaArenaBot:
                 log_error(f"保存性能指标失败: {e}")
         
         # 定期清理旧数据
-        if self.current_cycle % 100 == 0:  # 每100轮清理一次
+        if self.state.current_cycle % 100 == 0:  # 每100轮清理一次
             try:
                 self.data_manager.cleanup_old_data(days_to_keep=30)
                 log_info("📊 旧数据清理完成")
@@ -1196,13 +1294,16 @@ class AlphaArenaBot:
             wait_seconds = (next_time - now).total_seconds()
             return max(wait_seconds, 1)
     
-    def run(self):
-        """运行交易机器人"""
+    def run(self) -> None:
+        """运行交易机器人
+        
+        启动交易机器人的主循环，处理交易周期和异常恢复
+        """
         try:
             log_info("🚀 Alpha Pilot Bot OKX 交易机器人启动成功！")
-            self.is_running = True
+            self.state.is_running = True
             
-            while self.is_running:
+            while self.state.is_running:
                 try:
                     self.execute_trading_cycle()
                     
@@ -1219,7 +1320,7 @@ class AlphaArenaBot:
                     
                 except KeyboardInterrupt:
                     log_info("🛑 收到停止信号，正在关闭...")
-                    self.is_running = False
+                    self.state.is_running = False
                     break
                 except Exception as e:
                     log_error(f"交易循环异常: {e}")
@@ -1229,9 +1330,12 @@ class AlphaArenaBot:
             log_error(f"启动失败: {e}")
             raise
     
-    def stop(self):
-        """停止交易机器人"""
-        self.is_running = False
+    def stop(self) -> None:
+        """停止交易机器人
+        
+        安全停止交易机器人，清理资源并保存状态
+        """
+        self.state.is_running = False
         log_info("🛑 交易机器人已停止")
 
 def main():

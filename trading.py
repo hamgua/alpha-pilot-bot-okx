@@ -1,26 +1,62 @@
 """
 Alpha Pilot Bot OKX 交易逻辑模块
 封装所有交易相关的核心功能
+实现交易所连接、订单管理、风险控制和交易执行
 """
 
 import ccxt
 import time
 import json
+import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
-from config import config
+from dataclasses import dataclass
 from datetime import datetime
+from config import config
 from utils import log_info, log_warning, log_error
 
+@dataclass
+class OrderResult:
+    """订单执行结果数据结构"""
+    success: bool
+    order_id: Optional[str] = None
+    error_message: Optional[str] = None
+    filled_amount: float = 0.0
+    average_price: float = 0.0
+
+@dataclass
+class PositionInfo:
+    """持仓信息数据结构"""
+    side: str
+    size: float
+    entry_price: float
+    unrealized_pnl: float
+    leverage: float
+    symbol: str
+
 class ExchangeManager:
-    """交易所管理器"""
+    """交易所管理器
+    
+    负责与OKX交易所的API交互，包括：
+    - 交易所连接管理
+    - 市场数据获取
+    - 持仓信息查询
+    - 账户余额管理
+    """
     
     def __init__(self):
+        """初始化交易所管理器"""
         self.exchange = self._setup_exchange()
         self.symbol = config.get('exchange', 'symbol')
         self.inst_id = self.symbol.replace('/USDT:USDT', '-USDT-SWAP').replace('/', '-')
     
     def _setup_exchange(self) -> ccxt.Exchange:
-        """设置交易所连接"""
+        """设置交易所连接
+        
+        配置OKX交易所连接参数，包括API密钥、杠杆设置等
+        
+        Returns:
+            ccxt.Exchange: 配置好的交易所实例
+        """
         exchange_config = config.get('exchange')
         
         exchange = ccxt.okx({
@@ -50,7 +86,13 @@ class ExchangeManager:
         return exchange
     
     def fetch_ticker(self) -> Dict[str, float]:
-        """获取最新价格"""
+        """获取最新价格
+        
+        从交易所获取当前市场的最新价格信息
+        
+        Returns:
+            Dict[str, float]: 包含最新价格、买卖价、高低价、成交量等信息
+        """
         try:
             ticker = self.exchange.fetch_ticker(self.symbol)
             return {
@@ -66,7 +108,13 @@ class ExchangeManager:
             return {}
     
     def get_position(self) -> Optional[Dict[str, Any]]:
-        """获取当前持仓"""
+        """获取当前持仓
+        
+        查询当前交易对的持仓状态
+        
+        Returns:
+            Optional[Dict[str, Any]]: 持仓信息字典，如果没有持仓则返回None
+        """
         try:
             positions = self.exchange.fetch_positions([self.symbol])
             if positions and len(positions) > 0:
@@ -85,7 +133,13 @@ class ExchangeManager:
             return None
     
     def get_balance(self) -> Dict[str, float]:
-        """获取账户余额"""
+        """获取账户余额
+        
+        获取账户的USDT余额信息
+        
+        Returns:
+            Dict[str, float]: 包含总余额、可用余额、已用余额的字典
+        """
         try:
             balance = self.exchange.fetch_balance()
             usdt_balance = balance.get('USDT', {})
@@ -99,16 +153,35 @@ class ExchangeManager:
             return {'total': 0, 'free': 0, 'used': 0}
 
 class OrderManager:
-    """订单管理器"""
+    """订单管理器
+    
+    负责订单的创建、管理和监控，包括：
+    - 市价单和限价单的下达
+    - 止盈止损设置
+    - 订单状态查询
+    - 风险管理
+    """
     
     def __init__(self, exchange_manager: ExchangeManager):
+        """初始化订单管理器"""
         self.exchange = exchange_manager.exchange
         self.symbol = exchange_manager.symbol
         self.inst_id = exchange_manager.inst_id
         self.active_orders = {}
     
     def place_market_order(self, side: str, amount: float, reduce_only: bool = False) -> bool:
-        """下市价单"""
+        """下市价单
+        
+        下达市价单，立即以市场最优价格成交
+        
+        Args:
+            side: 交易方向 ('BUY' 或 'SELL')
+            amount: 交易数量
+            reduce_only: 是否仅用于减仓
+            
+        Returns:
+            bool: 订单是否成功下达
+        """
         if config.get('trading', 'test_mode'):
             log_info(f"🧪 模拟市价单: {side} {amount} @ market (reduce_only={reduce_only})")
             return True
@@ -577,8 +650,14 @@ class OrderManager:
             log_error(f"获取现有止盈止损订单异常: {e}")
             return []
 
-    def get_current_position(self):
-        """获取当前持仓情况 - 完全复制原项目逻辑"""
+    def get_current_position(self) -> Optional[Dict[str, Any]]:
+        """获取当前持仓情况 - 完全复制原项目逻辑
+        
+        获取当前交易对的详细持仓信息
+        
+        Returns:
+            Optional[Dict[str, Any]]: 持仓信息，如果没有持仓则返回None
+        """
         try:
             positions = self.exchange.fetch_positions([self.symbol])
 
@@ -603,7 +682,13 @@ class OrderManager:
             return None
 
     def _get_current_price(self) -> float:
-        """获取当前价格"""
+        """获取当前价格
+        
+        获取当前市场的最新成交价格
+        
+        Returns:
+            float: 当前价格
+        """
         try:
             ticker = self.exchange.fetch_ticker(self.symbol)
             return float(ticker.get('last', 0))
@@ -612,7 +697,13 @@ class OrderManager:
             return 0.0
 
     def cancel_all_tp_sl_orders(self) -> int:
-        """取消所有止盈止损订单 - 完全复制原项目逻辑"""
+        """取消所有止盈止损订单 - 完全复制原项目逻辑
+        
+        取消所有活跃的止盈止损算法订单
+        
+        Returns:
+            int: 成功取消的订单数量
+        """
         try:
             # 转换交易对格式：例如 "BTC/USDT:USDT" -> "BTC-USDT-SWAP"
             inst_id = self.symbol.replace('/USDT:USDT', '-USDT-SWAP').replace('/', '-')
@@ -666,7 +757,13 @@ class OrderManager:
             return 0
 
     def cancel_all_orders_comprehensive(self) -> Dict[str, int]:
-        """全面取消所有类型的订单，返回详细统计"""
+        """全面取消所有类型的订单，返回详细统计
+        
+        取消所有类型的订单，包括算法订单和普通订单
+        
+        Returns:
+            Dict[str, int]: 取消结果的详细统计
+        """
         result = {'algorithmic': 0, 'regular': 0, 'total': 0, 'errors': 0}
         
         try:
@@ -740,14 +837,27 @@ class OrderManager:
         return result
 
 class ShortSellingManager:
-    """做空管理器"""
+    """做空管理器
+    
+    负责管理做空交易的相关逻辑和权限控制
+    """
     
     def __init__(self):
+        """初始化做空管理器"""
         self.config = config.get('trading')
         self.is_enabled = self.config.get('allow_short_selling', False)
     
     def can_short_sell(self, current_position: Optional[Dict[str, Any]] = None) -> bool:
-        """检查是否可以做空"""
+        """检查是否可以做空
+        
+        根据配置和当前持仓状态判断是否允许做空
+        
+        Args:
+            current_position: 当前持仓信息，可选
+            
+        Returns:
+            bool: 是否允许做空
+        """
         if not self.is_enabled:
             return False
         
@@ -764,7 +874,13 @@ class ShortSellingManager:
         return True
     
     def get_short_selling_status(self) -> Dict[str, Any]:
-        """获取做空状态"""
+        """获取做空状态
+        
+        获取当前做空功能的配置状态
+        
+        Returns:
+            Dict[str, Any]: 做空状态信息
+        """
         return {
             'enabled': self.is_enabled,
             'current_mode': '双向交易' if self.is_enabled else '仅多头',
@@ -773,9 +889,17 @@ class ShortSellingManager:
         }
 
 class OrderManagementSystem:
-    """订单管理系统"""
+    """订单管理系统
+    
+    提供高级的订单管理功能，包括：
+    - 括号订单（同时包含入场、止损、止盈）
+    - 订单统计分析
+    - 订单参数验证
+    - 批量订单管理
+    """
     
     def __init__(self, exchange_manager: ExchangeManager):
+        """初始化订单管理系统"""
         self.exchange = exchange_manager.exchange
         self.symbol = exchange_manager.symbol
         self.inst_id = exchange_manager.inst_id

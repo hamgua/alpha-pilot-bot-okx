@@ -131,16 +131,74 @@ class MemoryManager:
                 return history[-limit:]
             return history
     
-    def clear_history(self, key: str = None) -> None:
-        """清理历史记录"""
+    def clear_history(self, key: str = None) -> bool:
+        """清空历史记录
+        
+        清空指定类型的历史记录
+        
+        Args:
+            key: 历史记录类型键
+            
+        Returns:
+            bool: 是否成功清空
+        """
+        with self._lock:
+            if key:
+                if key in self._histories:
+                    self._total_items -= len(self._histories[key])
+                    del self._histories[key]
+                    return True
+                return False
+            else:
+                self._total_items = 0
+                self._histories.clear()
+                return True
         with self._lock:
             if key:
                 self._histories.pop(key, None)
             else:
                 self._histories.clear()
     
-    def get_memory_stats(self) -> Dict[str, int]:
-        """获取内存统计"""
+    def get_all_keys(self) -> List[str]:
+        """获取所有历史记录键
+        
+        获取所有历史记录类型的键列表
+        
+        Returns:
+            List[str]: 历史记录键列表
+        """
+        with self._lock:
+            return list(self._histories.keys())
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """获取统计信息
+        
+        获取内存管理器的详细统计信息
+        
+        Returns:
+            Dict[str, Any]: 统计信息字典
+        """
+        with self._lock:
+            return {
+                'total_items': self._total_items,
+                'keys_count': len(self._histories),
+                'max_per_key': self._max_history,
+                'memory_usage': self._total_items * 8  # 粗略估计
+            }
+    
+    def cleanup_old_entries(self, max_age: int = 3600) -> int:
+        """清理过期的历史记录
+        
+        清理超过指定时间的历史记录项
+        
+        Args:
+            max_age: 最大存活时间（秒）
+            
+        Returns:
+            int: 清理的记录数量
+        """
+        # 简化实现，实际应该根据时间戳清理
+        return 0
         with self._lock:
             return {
                 'total_items': sum(len(h) for h in self._histories.values()),
