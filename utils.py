@@ -506,7 +506,9 @@ class LoggerHelper:
             'data': data
         }
         
-        trade_logger.log_event(log_data)
+        # 使用TradeLogger记录事件
+        trade_logger_instance = TradeLogger()
+        trade_logger_instance.log_ai_decision(log_data)
         log_info(f"📊 交易事件: {event_type} - {data}")
     
     @staticmethod
@@ -519,7 +521,9 @@ class LoggerHelper:
         }
         
         log_error(f"❌ 错误事件: {error_type} - {error_data}")
-        trade_logger.log_error(error_info)
+        # 使用TradeLogger记录错误
+        trade_logger_instance = TradeLogger()
+        trade_logger_instance.log_ai_decision(error_info)
 
 class ErrorClassifier:
     """错误分类器"""
@@ -1452,6 +1456,25 @@ def load_trades_history_from_file(file_path: str = None) -> List[Dict[str, Any]]
             return []
     except Exception as e:
         log_error(f"加载交易历史失败: {e}")
+        return []
+
+def load_equity_history_from_file(file_path: str = None) -> List[Dict[str, Any]]:
+    """从文件加载权益历史（供streamlit使用）"""
+    try:
+        from pathlib import Path
+        import json
+        
+        if file_path is None:
+            data_dir = Path(__file__).parent / "data_json"
+            file_path = data_dir / "equity_history.json"
+        
+        if Path(file_path).exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        else:
+            return []
+    except Exception as e:
+        log_error(f"加载权益历史失败: {e}")
         return []
 
 def save_trade_record(trade_record: Dict[str, Any]) -> bool:

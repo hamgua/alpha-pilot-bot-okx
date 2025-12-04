@@ -10,3 +10,4 @@ plotly
 numpy
 aiohttp
 nest-asyncio
+psutil

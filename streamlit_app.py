@@ -236,12 +236,13 @@ st.markdown("""
 
 # 数据文件路径
 import os
+from pathlib import Path
 
-# 确保数据目录存在
-data_dir = "/app/data_json"
-os.makedirs(data_dir, exist_ok=True)
+# 使用相对路径而不是绝对路径
+data_dir = Path(__file__).parent / "data_json"
+data_dir.mkdir(exist_ok=True)
 
-from utils import load_trading_data_from_file, load_trades_history_from_file
+from utils import load_trading_data_from_file, load_trades_history_from_file, load_equity_history_from_file
 
 DATA_FILE = os.path.join(data_dir, "trading_data.json")
 TRADES_FILE = os.path.join(data_dir, "trades_history.json")
@@ -277,10 +278,8 @@ def load_trades_history():
 def create_equity_chart():
     """创建账户总权益曲线图 - 高端深色主题"""
     try:
-        # 导入数据管理函数
-        from data_manager import load_equity_history
-
-        equity_history = load_equity_history()
+        # 使用utils中的函数加载权益历史
+        equity_history = load_equity_history_from_file()
 
         if not equity_history or len(equity_history) == 0:
             fig = go.Figure()

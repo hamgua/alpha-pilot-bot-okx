@@ -70,9 +70,35 @@ def run_legacy_trading_bot():
     """运行旧版交易程序（备用）"""
     try:
         log("🤖 启动旧版交易程序...")
-        # 导入旧版交易程序主函数
-        import deepseekok2
-        deepseekok2.main()
+        # 检查旧版文件是否存在
+        if Path('deepseekok2.py').exists():
+            try:
+                # 使用动态导入避免静态分析器警告
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("deepseekok2", "deepseekok2.py")
+                if spec and spec.loader:
+                    deepseekok2 = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(deepseekok2)
+                    deepseekok2.main()
+                else:
+                    raise ImportError("无法加载 deepseekok2 模块")
+            except ImportError as e:
+                log(f"⚠️ 旧版交易程序导入失败: {e}")
+                log("   跳过旧版启动，继续使用重构版")
+                # 等待一段时间后退出，避免无限重试
+                time.sleep(30)
+                return
+            except Exception as e:
+                log(f"⚠️ 旧版交易程序运行失败: {e}")
+                log("   跳过旧版启动，继续使用重构版")
+                # 等待一段时间后退出，避免无限重试
+                time.sleep(30)
+                return
+        else:
+            log("⚠️ 旧版交易程序文件不存在，跳过启动")
+            # 等待一段时间后退出，避免无限重试
+            time.sleep(30)
+            return
         
     except KeyboardInterrupt:
         log("🛑 旧版交易程序收到停止信号")

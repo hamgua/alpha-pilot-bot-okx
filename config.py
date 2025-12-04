@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 # 导入日志函数
-from utils import log_warning, log_error
+from utils import log_warning, log_error, log_info
 
 load_dotenv()
 
