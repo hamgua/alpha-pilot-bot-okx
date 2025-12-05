@@ -1054,9 +1054,7 @@ class AlphaArenaBot:
                         
             else:
                 # 检查是否应该退出横盘状态
-                if consolidation_detector.should_exit_consolidation(
-                    ai_signal_history, market_data
-                ):
+                if consolidation_detector.should_exit_consolidation(market_data):
                     consolidation_detector.reset_consolidation_state()
                     log_info("🔄 退出横盘状态")
                 
