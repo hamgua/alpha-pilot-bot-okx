@@ -1,5 +1,5 @@
 # 使用Python 3.11官方镜像作为基础镜像
-FROM hamgua/alpha-pilot-bot-okx:base_v1.0.0
+FROM hamgua/alpha-pilot-bot-okx:base_v1.1.0
 
 # 设置时区
 ENV TZ=Asia/Shanghai
@@ -24,5 +24,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 CMD ["python", "-u", "run.py"]
 
 # docker 构建业务镜像命令
-# docker buildx build --platform linux/amd64 --no-cache -t hamgua/alpha-arena-okx:v4.4.16 ./
-# docker push hamgua/alpha-arena-okx:v4.4.16
+# docker buildx build --platform linux/amd64 --no-cache -t hamgua/hamgua/alpha-pilot-bot-okx:v4.4.16 ./
+# docker push hamgua/hamgua/alpha-pilot-bot-okx:v4.4.16
