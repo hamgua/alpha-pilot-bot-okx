@@ -1337,6 +1337,13 @@ class AlphaArenaBot:
         """
         self.state.is_running = False
         log_info("🛑 交易机器人已停止")
+        
+        # 关闭日志文件
+        try:
+            from utils import close_log_file
+            close_log_file()
+        except Exception as e:
+            print(f"关闭日志文件失败: {e}")
 
 def main():
     """主函数"""

@@ -16,17 +16,76 @@ from dataclasses import dataclass
 def log_info(message):
     """输出信息日志，统一格式"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{timestamp}] [INFO] {message}")
+    log_message = f"[{timestamp}] [INFO] {message}"
+    print(log_message)
+    _write_to_log_file(log_message)
 
 def log_warning(message):
     """输出警告日志，统一格式"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{timestamp}] [WARNING] {message}")
+    log_message = f"[{timestamp}] [WARNING] {message}"
+    print(log_message)
+    _write_to_log_file(log_message)
 
 def log_error(message):
     """输出错误日志，统一格式"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{timestamp}] [ERROR] {message}")
+    log_message = f"[{timestamp}] [ERROR] {message}"
+    print(log_message)
+    _write_to_log_file(log_message)
+
+# 文件日志系统
+_log_file_handler = None
+_log_file_date = None
+
+def _get_log_file_path():
+    """获取当前日期的日志文件路径"""
+    from pathlib import Path
+    current_date = datetime.now().strftime('%Y%m%d')
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    # 生成日志文件名：alpha-pilot-bot-okx-YYYYMMDD.log
+    log_filename = f"alpha-pilot-bot-okx-{current_date}.log"
+    return log_dir / log_filename, current_date
+
+def _write_to_log_file(message):
+    """写入日志到文件"""
+    global _log_file_handler, _log_file_date
+    
+    try:
+        log_file_path, current_date = _get_log_file_path()
+        
+        # 检查是否需要创建新的日志文件（日期变化）
+        if _log_file_date != current_date or _log_file_handler is None:
+            # 关闭旧的文件句柄
+            if _log_file_handler is not None:
+                try:
+                    _log_file_handler.close()
+                except:
+                    pass
+            
+            # 创建新的文件句柄
+            _log_file_handler = open(log_file_path, 'a', encoding='utf-8')
+            _log_file_date = current_date
+        
+        # 写入日志消息
+        _log_file_handler.write(message + '\n')
+        _log_file_handler.flush()  # 立即刷新到磁盘
+        
+    except Exception as e:
+        # 如果文件写入失败，只打印错误信息，不影响主程序
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] 日志文件写入失败: {e}")
+
+def close_log_file():
+    """关闭日志文件句柄（程序退出时调用）"""
+    global _log_file_handler
+    if _log_file_handler is not None:
+        try:
+            _log_file_handler.close()
+            _log_file_handler = None
+        except:
+            pass
 
 @dataclass
 class CacheItem:
