@@ -1075,9 +1075,13 @@ class AlphaArenaBot:
     
     def _execute_consolidation_action(self, action: str, position: Dict[str, Any],
                                     market_data: Dict[str, Any]) -> bool:
-        """执行横盘处理动作"""
+        """执行横盘处理动作 - 增强版，修复平仓失败问题"""
         try:
             log_info(f"🔄 执行横盘处理动作: {action}")
+            log_info(f"📊 当前持仓信息:")
+            log_info(f"   持仓方向: {position.get('side', 'unknown')}")
+            log_info(f"   持仓数量: {position.get('size', 0)}")
+            log_info(f"   入场价格: ${position.get('entry_price', 0):.2f}")
             
             if action == 'partial_close':
                 # 部分平仓
@@ -1085,24 +1089,54 @@ class AlphaArenaBot:
                 close_ratio = config.get('strategies', 'profit_lock_strategy', {}).get('partial_close_ratio', 0.5)
                 close_size = current_size * close_ratio
                 
+                log_info(f"📊 部分平仓计算:")
+                log_info(f"   原始持仓: {current_size}")
+                log_info(f"   平仓比例: {close_ratio}")
+                log_info(f"   计算平仓数量: {close_size}")
+                
                 if close_size > 0:
-                    success = trading_engine.close_position('long', close_size)
+                    # 确保平仓数量不超过持仓数量
+                    actual_close_size = min(close_size, current_size)
+                    log_info(f"   实际平仓数量: {actual_close_size} (限制后)")
+                    
+                    # 获取当前持仓方向
+                    position_side = position.get('side', 'long')
+                    if position_side not in ['long', 'short']:
+                        position_side = 'long'  # 默认多头
+                    
+                    success = trading_engine.close_position(position_side, actual_close_size)
                     if success:
-                        log_info(f"✅ 部分平仓成功: {close_size} BTC")
+                        log_info(f"✅ 部分平仓成功: {actual_close_size} BTC")
                         return True
                     else:
-                        log_error("❌ 部分平仓失败")
+                        log_error(f"❌ 部分平仓失败: {position_side} 方向 {actual_close_size} 张")
                         return False
+                else:
+                    log_warning(f"⚠️ 计算出的平仓数量无效: {close_size}")
+                    return False
                         
             elif action == 'full_close':
                 # 全部平仓
-                success = trading_engine.close_position('long', position.get('size', 0))
-                if success:
-                    log_info("✅ 全部平仓成功")
-                    return True
+                current_size = position.get('size', 0)
+                position_side = position.get('side', 'long')
+                if position_side not in ['long', 'short']:
+                    position_side = 'long'
+                
+                log_info(f"📊 全部平仓:")
+                log_info(f"   平仓方向: {position_side}")
+                log_info(f"   平仓数量: {current_size}")
+                
+                if current_size > 0:
+                    success = trading_engine.close_position(position_side, current_size)
+                    if success:
+                        log_info("✅ 全部平仓成功")
+                        return True
+                    else:
+                        log_error(f"❌ 全部平仓失败: {position_side} 方向 {current_size} 张")
+                        return False
                 else:
-                    log_error("❌ 全部平仓失败")
-                    return False
+                    log_warning("⚠️ 持仓数量为0，无需平仓")
+                    return True
                     
             elif action == 'cancel_orders':
                 # 取消所有挂单
@@ -1119,7 +1153,9 @@ class AlphaArenaBot:
                 return False
                 
         except Exception as e:
-            log_error(f"执行横盘处理动作异常: {e}")
+            log_error(f"执行横盘处理动作异常: {type(e).__name__}: {e}")
+            import traceback
+            log_error(f"横盘处理动作堆栈:\n{traceback.format_exc()}")
             return False
     
     def _get_ai_signal_history(self) -> list[str]:

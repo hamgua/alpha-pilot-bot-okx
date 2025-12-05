@@ -1517,76 +1517,166 @@ class TradingEngine:
         )
     
     def close_position(self, side: str, amount: float) -> bool:
-        """平仓操作
-        
-        Args:
-            side: 持仓方向 ('long' 或 'short')
-            amount: 平仓数量
-            
-        Returns:
-            bool: 平仓是否成功
-        """
+        """平仓操作 - 超级增强版，专门处理0.025等复杂情况"""
         if config.get('trading', 'test_mode'):
             log_info(f"🧪 模拟平仓: {side} 方向 {amount} 张")
             return True
             
         try:
-            # 平仓前再次验证持仓状态
+            # 详细的平仓前验证
             current_position = self.exchange_manager.get_position()
-            log_info(f"📊 平仓前持仓验证:")
-            if not current_position:
-                log_info("   无持仓，无需平仓")
-                return True
-            else:
-                log_info(f"   当前持仓方向: {current_position['side']}")
-                log_info(f"   当前持仓大小: {current_position['size']}")
-                log_info(f"   当前持仓方向与平仓方向匹配: {current_position['side'] == side}")
+            log_info(f"📊 【平仓前验证】")
+            log_info(f"   请求平仓方向: {side}")
+            log_info(f"   请求平仓数量: {amount}")
             
-            # 验证持仓方向和数量
-            if current_position['side'] != side:
-                log_info("   方向不匹配，无需平仓")
+            if not current_position:
+                log_info("   ❌ 无持仓，无需平仓")
                 return True
                 
-            # 验证平仓数量不超过持仓数量
+            log_info(f"   当前持仓方向: {current_position['side']}")
+            log_info(f"   当前持仓大小: {current_position['size']}")
+            log_info(f"   方向匹配检查: {current_position['side']} == {side} -> {current_position['side'] == side}")
+            
+            # 验证持仓方向
+            if current_position['side'] != side:
+                log_info("   ⚠️ 方向不匹配，无需平仓")
+                return True
+                
+            # 验证平仓数量
             actual_amount = min(amount, current_position['size'])
-            log_info(f"📊 平仓数量计算:")
-            log_info(f"   请求平仓数量: {amount}")
-            log_info(f"   实际可平数量: {actual_amount}")
+            log_info(f"📊 【平仓数量计算】")
+            log_info(f"   请求数量: {amount}")
             log_info(f"   持仓数量: {current_position['size']}")
+            log_info(f"   实际可平: {actual_amount}")
             
             if actual_amount <= 0:
-                log_info("   无需平仓")
+                log_info("   ⚠️ 无需平仓")
                 return True
             
-            # 标准化合约数量 - 智能检测正确的合约单位
-            standardized_amount = self.order_manager._standardize_contract_amount(actual_amount)
-            log_info(f"📊 数量标准化:")
+            # 超级激进的合约数量标准化 - 专门针对平仓场景
+            log_info(f"📊 【合约数量标准化 - 平仓专用】")
             log_info(f"   标准化前: {actual_amount}")
+            
+            # 尝试多种标准化策略
+            standardized_amount = self._standardize_close_amount(actual_amount)
             log_info(f"   标准化后: {standardized_amount}")
             
             if standardized_amount <= 0:
-                log_warning(f"⚠️ 标准化后的平仓数量为0，跳过平仓: {actual_amount} -> {standardized_amount}")
+                log_error(f"❌ 标准化失败: {actual_amount} -> {standardized_amount}")
+                return False
+            
+            # 再次验证标准化后的数量不超过持仓
+            final_amount = min(standardized_amount, current_position['size'])
+            log_info(f"   最终平仓数量: {final_amount} (二次限制后)")
+            
+            if final_amount <= 0:
+                log_warning(f"⚠️ 最终平仓数量为0，跳过平仓")
                 return True
             
             close_side = 'sell' if side == 'long' else 'buy'
-            log_info(f"📊 平仓参数:")
+            log_info(f"📊 【平仓执行】")
             log_info(f"   平仓方向: {close_side}")
-            log_info(f"   平仓数量: {standardized_amount}")
-            log_info(f"   订单类型: 市价单 (reduce_only=True)")
+            log_info(f"   平仓数量: {final_amount}")
+            log_info(f"   订单类型: reduce_only市价单")
             
-            # 使用市价单平仓，设置reduce_only=True
-            success = self.order_manager.place_market_order(close_side, standardized_amount, reduce_only=True)
+            # 执行平仓
+            success = self.order_manager.place_market_order(close_side, final_amount, reduce_only=True)
             
             if success:
-                log_info(f"✅ 平仓成功: {side} 方向 {actual_amount:.4f} 张")
+                log_info(f"✅ 平仓成功: {side} 方向 {final_amount} 张")
+                return True
             else:
-                log_error(f"❌ 平仓失败: {side} 方向 {actual_amount:.4f} 张")
-            
-            return success
+                log_error(f"❌ 平仓失败: {side} 方向 {final_amount} 张")
+                
+                # 尝试降级策略 - 使用稍小的数量
+                fallback_amount = final_amount * 0.99  # 减少1%
+                log_info(f"🔄 尝试降级策略: {final_amount} -> {fallback_amount}")
+                
+                fallback_success = self.order_manager.place_market_order(close_side, fallback_amount, reduce_only=True)
+                if fallback_success:
+                    log_info(f"✅ 降级策略成功: {fallback_amount} 张")
+                    return True
+                else:
+                    log_error(f"❌ 降级策略也失败: {fallback_amount} 张")
+                    return False
             
         except Exception as e:
-            log_error(f"平仓异常: {e}")
+            log_error(f"❌ 平仓异常: {type(e).__name__}: {e}")
+            import traceback
+            log_error(f"平仓详细错误:\n{traceback.format_exc()}")
             return False
+    
+    def _standardize_close_amount(self, amount: float) -> float:
+        """专门为平仓设计的超级激进数量标准化"""
+        try:
+            log_info(f"📊 【平仓标准化输入】amount={amount}")
+            
+            # 策略1: 直接查询交易所合约规格
+            try:
+                inst_id = self.exchange_manager.symbol.replace('/USDT:USDT', '-USDT-SWAP').replace('/', '-')
+                instrument_info = self.exchange_manager.exchange.publicGetPublicInstruments({
+                    'instType': 'SWAP',
+                    'instId': inst_id
+                })
+                
+                if instrument_info and instrument_info.get('code') == '0' and instrument_info.get('data'):
+                    instrument = instrument_info['data'][0]
+                    lot_size = float(instrument.get('lotSz', 0.001))
+                    min_sz = float(instrument.get('minSz', 0.001))
+                    
+                    log_info(f"📊 【OKX合约信息】lot_size={lot_size}, min_sz={min_sz}")
+                    
+                    # 使用lot size进行标准化
+                    if lot_size > 0:
+                        multiplier = max(1, int(round(amount / lot_size)))
+                        standardized = multiplier * lot_size
+                        
+                        if standardized >= min_sz:
+                            log_info(f"📊 【OKX标准化成功】{amount} -> {standardized} (lot_size: {lot_size}, multiplier: {multiplier})")
+                            return standardized
+                            
+            except Exception as e:
+                log_warning(f"获取OKX合约信息失败: {e}")
+            
+            # 策略2: 针对0.025的特殊处理 - 基于实际错误经验
+            if 0.02 <= amount <= 0.03:
+                # OKX BTC-USDT-SWAP可能使用0.01作为基本单位
+                multiplier = max(1, int(round(amount / 0.01)))
+                candidate = multiplier * 0.01
+                
+                log_info(f"📊 【0.025特殊处理】{amount} -> {candidate} (使用 lot size 0.01, multiplier: {multiplier})")
+                return candidate
+            
+            # 策略3: 尝试常见lot size组合
+            common_lot_sizes = [0.001, 0.01, 0.1]
+            for lot_size in common_lot_sizes:
+                multiplier = max(1, int(round(amount / lot_size)))
+                candidate = multiplier * lot_size
+                
+                if abs(candidate - amount) < lot_size * 0.1:  # 差距小于10%
+                    log_info(f"📊 【常见lot size成功】{amount} -> {candidate} (lot_size: {lot_size}, multiplier: {multiplier})")
+                    return candidate
+            
+            # 策略4: 智能四舍五入到合理精度
+            if amount < 0.01:
+                # 小数量：使用0.001精度
+                standardized = round(amount, 3)
+            elif amount < 0.1:
+                # 中等数量：使用0.01精度
+                standardized = round(amount, 2)
+            else:
+                # 大数量：使用0.1精度
+                standardized = round(amount, 1)
+            
+            log_info(f"📊 【智能四舍五入】{amount} -> {standardized}")
+            return max(standardized, 0.001)  # 确保不小于最小值
+            
+        except Exception as e:
+            log_error(f"平仓标准化异常: {e}")
+            # 最终回退
+            fallback = round(max(float(amount), 0.001), 3)
+            log_info(f"📊 【最终回退】{amount} -> {fallback}")
+            return fallback
 
     def get_position_info(self) -> Dict[str, Any]:
         """获取持仓信息"""

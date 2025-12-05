@@ -265,7 +265,7 @@ class AIClient:
             return None
     
     async def get_multi_ai_signals(self, market_data: Dict[str, Any], providers: List[str] = None) -> List[AISignal]:
-        """获取多AI信号（增强版）"""
+        """获取多AI信号（增强版）- 优化失败AI处理"""
         if providers is None:
             providers = ['deepseek', 'kimi', 'openai']
             
@@ -281,8 +281,11 @@ class AIClient:
         max_retries = 2
         
         signals = []
+        failed_providers = []
+        successful_providers = []
         
         for provider in enabled_providers:
+            provider_success = False
             for attempt in range(max_retries + 1):
                 try:
                     signal = await asyncio.wait_for(
@@ -291,9 +294,11 @@ class AIClient:
                     )
                     if signal:
                         signals.append(signal)
+                        successful_providers.append(provider)
                         log_info(f"🤖 {provider.upper()}回复: {signal.signal} (信心: {signal.confidence:.1f})")
                         clean_reason = ' '.join(signal.reason.replace('\n', ' ').replace('\r', ' ').split())
                         log_info(f"📋 {provider.upper()}理由: {clean_reason[:100]}...")
+                        provider_success = True
                         break
                     else:
                         if attempt < max_retries:
@@ -310,11 +315,19 @@ class AIClient:
                     log_error(f"{provider}异常: {e}")
                     if attempt < max_retries:
                         await asyncio.sleep(1)
+            
+            if not provider_success:
+                failed_providers.append(provider)
+        
+        # 记录融合统计
+        log_info(f"📊 AI信号获取统计: 成功={len(successful_providers)}, 失败={len(failed_providers)}")
+        if failed_providers:
+            log_warning(f"⚠️ 失败的AI提供商: {failed_providers}")
         
         return signals
     
     def fuse_signals(self, signals: List[AISignal]) -> Dict[str, Any]:
-        """融合多AI信号"""
+        """融合多AI信号 - 增强版，优化部分AI失败的处理"""
         log_info(f"🔍 开始融合AI信号，共收到 {len(signals)} 个信号")
         
         if not signals:
@@ -324,7 +337,13 @@ class AIClient:
                 'confidence': 0.5,
                 'reason': 'AI信号获取失败，使用回退信号',
                 'providers': [],
-                'fusion_method': 'fallback'
+                'fusion_method': 'fallback',
+                'fusion_analysis': {
+                    'total_providers': 0,
+                    'successful_providers': 0,
+                    'failed_providers': 0,
+                    'fusion_reason': '无可用AI信号，使用保守回退策略'
+                }
             }
 
         if len(signals) == 1:
@@ -335,52 +354,104 @@ class AIClient:
                 'confidence': signal.confidence,
                 'reason': f"{signal.provider}: {signal.reason}",
                 'providers': [signal.provider],
-                'fusion_method': 'single'
+                'fusion_method': 'single',
+                'fusion_analysis': {
+                    'total_providers': 1,
+                    'successful_providers': 1,
+                    'failed_providers': 0,
+                    'fusion_reason': f'仅{signal.provider}信号可用，直接使用其建议'
+                }
             }
 
-        # 多信号融合
+        # 多信号融合 - 增强版逻辑
         buy_votes = sum(1 for s in signals if s.signal == 'BUY')
         sell_votes = sum(1 for s in signals if s.signal == 'SELL')
         hold_votes = sum(1 for s in signals if s.signal == 'HOLD')
 
         total_signals = len(signals)
+        total_configured = len([p for p in ['deepseek', 'kimi', 'openai'] if self.providers.get(p, {}).get('api_key')])
 
-        # 计算加权信心
-        buy_confidence = sum(s.confidence for s in signals if s.signal == 'BUY') / total_signals
-        sell_confidence = sum(s.confidence for s in signals if s.signal == 'SELL') / total_signals
-        hold_confidence = sum(s.confidence for s in signals if s.signal == 'HOLD') / total_signals
+        # 计算加权信心 - 基于实际成功信号
+        buy_confidence = sum(s.confidence for s in signals if s.signal == 'BUY') / total_signals if total_signals > 0 else 0
+        sell_confidence = sum(s.confidence for s in signals if s.signal == 'SELL') / total_signals if total_signals > 0 else 0
+        hold_confidence = sum(s.confidence for s in signals if s.signal == 'HOLD') / total_signals if total_signals > 0 else 0
 
         log_info(f"🗳️ 投票统计: BUY={buy_votes}, SELL={sell_votes}, HOLD={hold_votes}")
         log_info(f"📈 信心分布: BUY={buy_confidence:.2f}, SELL={sell_confidence:.2f}, HOLD={hold_confidence:.2f}")
+        log_info(f"📊 成功率: {total_signals}/{total_configured} ({total_signals/total_configured*100:.1f}%)")
 
-        # 确定最终信号
-        if buy_votes > sell_votes and buy_votes > hold_votes:
+        # 增强决策逻辑 - 考虑部分AI失败的情况
+        majority_threshold = 0.6  # 60% majority threshold
+        consensus_threshold = 0.8  # 80% consensus threshold
+        
+        # 计算各信号的占比
+        buy_ratio = buy_votes / total_signals
+        sell_ratio = sell_votes / total_signals
+        hold_ratio = hold_votes / total_signals
+
+        # 确定最终信号 - 增强逻辑
+        if buy_ratio >= consensus_threshold:
             final_signal = 'BUY'
             confidence = buy_confidence
-            reason = f"多AI融合: {buy_votes}/{total_signals}票支持买入"
-            log_info(f"🎯 最终决策: BUY (信心: {confidence:.2f})")
-        elif sell_votes > buy_votes and sell_votes > hold_votes:
+            reason = f"强共识买入: {buy_votes}/{total_signals}票支持 ({buy_ratio*100:.0f}%)"
+            log_info(f"🎯 强共识决策: BUY (信心: {confidence:.2f})")
+        elif sell_ratio >= consensus_threshold:
             final_signal = 'SELL'
             confidence = sell_confidence
-            reason = f"多AI融合: {sell_votes}/{total_signals}票支持卖出"
-            log_info(f"🎯 最终决策: SELL (信心: {confidence:.2f})")
-        else:
+            reason = f"强共识卖出: {sell_votes}/{total_signals}票支持 ({sell_ratio*100:.0f}%)"
+            log_info(f"🎯 强共识决策: SELL (信心: {confidence:.2f})")
+        elif hold_ratio >= consensus_threshold:
             final_signal = 'HOLD'
             confidence = hold_confidence
-            reason = f"多AI融合: {hold_votes}/{total_signals}票支持持仓"
-            log_info(f"🎯 最终决策: HOLD (信心: {confidence:.2f})")
+            reason = f"强共识持仓: {hold_votes}/{total_signals}票支持 ({hold_ratio*100:.0f}%)"
+            log_info(f"🎯 强共识决策: HOLD (信心: {confidence:.2f})")
+        elif buy_ratio >= majority_threshold:
+            final_signal = 'BUY'
+            confidence = buy_confidence * 0.9  # 降低信心，因为不是强共识
+            reason = f"多数支持买入: {buy_votes}/{total_signals}票支持 ({buy_ratio*100:.0f}%)"
+            log_info(f"🎯 多数决策: BUY (信心: {confidence:.2f})")
+        elif sell_ratio >= majority_threshold:
+            final_signal = 'SELL'
+            confidence = sell_confidence * 0.9
+            reason = f"多数支持卖出: {sell_votes}/{total_signals}票支持 ({sell_ratio*100:.0f}%)"
+            log_info(f"🎯 多数决策: SELL (信心: {confidence:.2f})")
+        else:
+            # 没有明显多数，倾向于HOLD
+            final_signal = 'HOLD'
+            confidence = hold_confidence * 1.1  # 轻微提升HOLD信心
+            reason = f"无明显共识，建议观望: HOLD {hold_votes}/{total_signals}票 ({hold_ratio*100:.0f}%)"
+            log_info(f"🎯 保守决策: HOLD (信心: {confidence:.2f})")
 
-        # 增强信心调整
-        confidence_multiplier = max(buy_votes, sell_votes, hold_votes) / total_signals
+        # 基于成功率调整信心 - 关键改进
+        success_rate = total_signals / total_configured if total_configured > 0 else 1.0
+        if success_rate < 0.5:  # 如果成功率低于50%
+            confidence *= 0.7  # 大幅降低信心
+            reason += f" (AI成功率仅{success_rate*100:.0f}%，降低信心)"
+            log_info(f"⚠️ AI成功率低({success_rate*100:.0f}%)，降低信心至 {confidence:.2f}")
+
+        # 增强信心调整 - 基于共识度
+        max_ratio = max(buy_ratio, sell_ratio, hold_ratio)
+        confidence_multiplier = max_ratio
         confidence *= confidence_multiplier
-        log_info(f"⚖️ 信心调整: 原始信心 × {confidence_multiplier:.2f} = {confidence:.2f}")
+        log_info(f"⚖️ 共识度调整: 原始信心 × {confidence_multiplier:.2f} = {confidence:.2f}")
 
         result = {
             'signal': final_signal,
             'confidence': confidence,
             'reason': reason,
             'providers': [s.provider for s in signals],
-            'fusion_method': 'weighted_voting',
+            'fusion_method': 'enhanced_weighted_voting',
+            'fusion_analysis': {
+                'total_providers': total_configured,
+                'successful_providers': total_signals,
+                'failed_providers': total_configured - total_signals,
+                'success_rate': success_rate,
+                'buy_ratio': buy_ratio,
+                'sell_ratio': sell_ratio,
+                'hold_ratio': hold_ratio,
+                'max_consensus': max_ratio,
+                'fusion_reason': reason
+            },
             'votes': {
                 'BUY': buy_votes,
                 'SELL': sell_votes,
