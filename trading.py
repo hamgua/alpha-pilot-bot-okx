@@ -764,68 +764,120 @@ class OrderManager:
                 precision = 3
                 min_amount = 0.001
             
-            # 激进的OKX BTC-USDT-SWAP标准化策略
+            log_info(f"📊 合约标准化输入: amount={amount}, contract_size={actual_contract_size}, precision={precision}, min_amount={min_amount}")
+            
+            # 超级激进的OKX BTC-USDT-SWAP标准化策略
             # 基于实际错误"Order quantity must be a multiple of the lot size"
             
-            # 策略1: 尝试不同的"lot size"定义
+            # 策略0: 直接查询交易所的合约规格
+            try:
+                # 尝试获取OKX的具体合约信息
+                instrument_info = self.exchange.publicGetPublicInstruments({
+                    'instType': 'SWAP',
+                    'instId': self.inst_id
+                })
+                
+                if instrument_info and instrument_info.get('code') == '0' and instrument_info.get('data'):
+                    instrument = instrument_info['data'][0]
+                    lot_size = float(instrument.get('lotSz', 0.001))  # 合约单位
+                    min_sz = float(instrument.get('minSz', 0.001))    # 最小数量
+                    tick_sz = float(instrument.get('tickSz', 0.001))  # 价格精度
+                    
+                    log_info(f"📊 OKX合约信息: lot_size={lot_size}, min_sz={min_sz}, tick_sz={tick_sz}")
+                    
+                    # 使用交易所的实际lot size
+                    if lot_size > 0:
+                        multiplier = int(round(amount / lot_size))
+                        if multiplier <= 0:
+                            multiplier = 1
+                        
+                        standardized = multiplier * lot_size
+                        standardized = round(standardized, precision)
+                        
+                        if standardized >= min_sz:
+                            log_info(f"📊 OKX标准化成功: {amount} -> {standardized} (lot_size: {lot_size}, multiplier: {multiplier})")
+                            return standardized
+                        
+            except Exception as e:
+                log_warning(f"获取OKX合约信息失败: {e}")
+            
+            # 策略1: 超激进的lot size检测 - 针对0.025问题
+            # 基于实际错误，OKX BTC-USDT-SWAP可能使用0.01作为基本单位
+            if 0.02 <= amount <= 0.03:  # 0.025附近的特殊处理
+                # 尝试使用0.01作为基本单位
+                multiplier = int(round(amount / 0.01))
+                if multiplier > 0:
+                    candidate = multiplier * 0.01
+                    candidate = round(candidate, precision)
+                    if candidate >= min_amount:
+                        log_info(f"📊 0.025特殊处理: {amount} -> {candidate} (使用 lot size 0.01, multiplier: {multiplier})")
+                        return candidate
+            
+            # 策略2: 尝试不同的"lot size"定义 - 修复整数除法问题
             possible_lot_sizes = [0.001, 0.01, 0.1, 1.0]
             
             for lot_size in possible_lot_sizes:
-                multiplier = round(amount / lot_size)
-                if multiplier > 0:
-                    candidate = multiplier * lot_size
-                    candidate = round(candidate, precision)
+                try:
+                    # 使用浮点数除法，避免整数问题
+                    multiplier_float = amount / lot_size
+                    multiplier = int(round(multiplier_float))
                     
-                    # 检查这个候选值是否可能有效
-                    if candidate >= min_amount:
-                        # 记录这个尝试
-                        log_info(f"📊 尝试 lot size {lot_size}: {amount} -> {candidate} (倍数: {multiplier})")
+                    if multiplier > 0:
+                        candidate = multiplier * lot_size
+                        candidate = round(candidate, precision)
                         
-                        # 对于0.025这个特定问题，尝试更小的lot size
-                        if amount == 0.025 and lot_size == 0.001 and multiplier == 25:
-                            # 25 * 0.001 = 0.025，但OKX可能要求不同的lot size
-                            # 尝试调整到最接近的有效值
-                            if lot_size == 0.001:
-                                # 尝试使用0.01作为lot size
-                                alt_multiplier = round(amount / 0.01)
-                                if alt_multiplier > 0:
-                                    alt_candidate = alt_multiplier * 0.01
-                                    alt_candidate = round(alt_candidate, precision)
-                                    log_info(f"📊 替代方案: 0.025 -> {alt_candidate} (使用 lot size 0.01)")
-                                    return alt_candidate
+                        # 检查这个候选值是否可能有效
+                        if candidate >= min_amount:
+                            # 记录这个尝试
+                            log_info(f"📊 尝试 lot size {lot_size}: {amount} -> {candidate} (倍数: {multiplier}, 浮点倍数: {multiplier_float:.4f})")
+                            return candidate
+                except Exception as e:
+                    log_warning(f" lot size {lot_size} 处理失败: {e}")
+                    continue
             
-            # 策略2: 强制调整到最接近的"安全"值
-            # 基于OKX的实际要求，可能需要使用不同的lot size
-            if amount > 0.01 and amount <= 0.03:
-                # 对于0.025附近的值，尝试使用0.01作为基本单位
-                safe_multiplier = round(amount / 0.01)
-                if safe_multiplier > 0:
-                    safe_amount = safe_multiplier * 0.01
-                    safe_amount = round(safe_amount, precision)
-                    log_info(f"📊 强制安全调整: {amount} -> {safe_amount} (使用 lot size 0.01)")
-                    return safe_amount
+            # 策略3: 强制调整到最接近的"安全"值
+            if amount > 0.01 and amount <= 0.05:
+                # 对于小数量，优先使用0.01作为基本单位
+                try:
+                    safe_multiplier_float = amount / 0.01
+                    safe_multiplier = int(round(safe_multiplier_float))
+                    if safe_multiplier > 0:
+                        safe_amount = safe_multiplier * 0.01
+                        safe_amount = round(safe_amount, precision)
+                        if safe_amount >= min_amount:
+                            log_info(f"📊 强制安全调整: {amount} -> {safe_amount} (使用 lot size 0.01, 倍数: {safe_multiplier})")
+                            return safe_amount
+                except Exception as e:
+                    log_warning(f"安全调整失败: {e}")
             
-            # 策略3: 标准标准化（作为回退）
-            multiplier = round(amount / actual_contract_size)
-            if multiplier <= 0:
-                multiplier = 1
-            
-            standardized_amount = multiplier * actual_contract_size
-            standardized_amount = round(standardized_amount, precision)
-            
-            # 确保在最小交易量以上
-            if standardized_amount < min_amount:
-                standardized_amount = min_amount
-            
-            log_info(f"📊 标准标准化: {amount} -> {standardized_amount} (合约大小: {actual_contract_size})")
-            return standardized_amount
+            # 策略4: 标准标准化（作为回退）- 修复整数除法问题
+            try:
+                multiplier_float = amount / actual_contract_size
+                multiplier = int(round(multiplier_float))
+                if multiplier <= 0:
+                    multiplier = 1
+                
+                standardized_amount = multiplier * actual_contract_size
+                standardized_amount = round(standardized_amount, precision)
+                
+                # 确保在最小交易量以上
+                if standardized_amount < min_amount:
+                    standardized_amount = min_amount
+                
+                log_info(f"📊 标准标准化: {amount} -> {standardized_amount} (合约大小: {actual_contract_size}, 倍数: {multiplier})")
+                return standardized_amount
+            except Exception as e:
+                log_warning(f"标准标准化失败: {e}")
             
         except Exception as e:
             log_error(f"合约数量标准化失败: {e}")
-            # 回退到安全值
-            safe_fallback = round(max(amount, 0.001), 3)
-            log_info(f"📊 使用安全回退值: {safe_fallback}")
-            return safe_fallback
+            import traceback
+            log_error(f"标准化详细错误: {traceback.format_exc()}")
+        
+        # 最终回退到安全值
+        safe_fallback = round(max(float(amount), 0.001), 3)
+        log_info(f"📊 使用最终安全回退值: {amount} -> {safe_fallback}")
+        return safe_fallback
 
     def cancel_all_tp_sl_orders(self) -> int:
         """取消所有止盈止损订单 - 完全复制原项目逻辑
