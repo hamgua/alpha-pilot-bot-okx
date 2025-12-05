@@ -20,6 +20,34 @@ def log_info(message):
     print(log_message)
     _write_to_log_file(log_message)
 
+def log_decision(message):
+    """输出决策相关日志，使用特殊格式"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_message = f"[{timestamp}] [DECISION] 🎯 {message}"
+    print(log_message)
+    _write_to_log_file(log_message)
+
+def log_performance(message):
+    """输出性能相关日志"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_message = f"[{timestamp}] [PERFORMANCE] 📊 {message}"
+    print(log_message)
+    _write_to_log_file(log_message)
+
+def log_strategy(message):
+    """输出策略相关日志"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_message = f"[{timestamp}] [STRATEGY] 🎯 {message}"
+    print(log_message)
+    _write_to_log_file(log_message)
+
+def log_risk(message):
+    """输出风险管理相关日志"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_message = f"[{timestamp}] [RISK] 🛡️ {message}"
+    print(log_message)
+    _write_to_log_file(log_message)
+
 def log_warning(message):
     """输出警告日志，统一格式"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

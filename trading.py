@@ -1293,6 +1293,11 @@ class TradingEngine:
     
     def execute_trade(self, signal: str, amount: float, price: Optional[float] = None) -> bool:
         """执行交易"""
+        log_info(f"🚀 开始执行交易:")
+        log_info(f"   信号: {signal}")
+        log_info(f"   数量: {amount}")
+        log_info(f"   价格: ${price or 'market'}")
+        
         if config.get('trading', 'test_mode'):
             log_info(f"🧪 模拟交易: {signal} {amount} @ ${price or 'market'}")
             return True
@@ -1300,25 +1305,44 @@ class TradingEngine:
         try:
             # 获取当前持仓
             current_position = self.exchange_manager.get_position()
+            log_info(f"📊 当前持仓状态:")
+            if current_position:
+                log_info(f"   方向: {current_position['side']}")
+                log_info(f"   大小: {current_position['size']}")
+                log_info(f"   入场价: ${current_position['entry_price']:,.2f}")
+                log_info(f"   未实现盈亏: ${current_position['unrealized_pnl']:,.2f}")
+            else:
+                log_info("   无持仓")
             
             if signal.upper() == 'BUY':
-                return self.order_manager.place_market_order('BUY', amount)
+                log_info("📈 执行买入操作")
+                result = self.order_manager.place_market_order('BUY', amount)
+                log_info(f"✅ 买入操作结果: {'成功' if result else '失败'}")
+                return result
             elif signal.upper() == 'SELL':
                 # 检查做空权限
+                log_info("📉 执行卖出操作")
                 if not self.short_selling_manager.can_short_sell(current_position):
+                    log_info("   做空权限检查: 不允许做空")
                     if current_position and current_position['side'] == 'long':
                         # 如果是多头仓位，执行平仓
                         close_amount = min(amount, current_position['size'])
+                        log_info(f"   平仓数量: {close_amount} (原始: {amount}, 持仓: {current_position['size']})")
                         if close_amount > 0:
-                            return self.order_manager.place_market_order('SELL', close_amount, reduce_only=True)
+                            result = self.order_manager.place_market_order('SELL', close_amount, reduce_only=True)
+                            log_info(f"✅ 平仓操作结果: {'成功' if result else '失败'}")
+                            return result
                         else:
                             log_info("当前无多头仓位可平仓")
                             return False
                     else:
                         log_warning("做空功能已禁用，无法开空仓")
                         return False
-                
-                return self.order_manager.place_market_order('SELL', amount)
+                else:
+                    log_info("   做空权限检查: 允许做空")
+                    result = self.order_manager.place_market_order('SELL', amount)
+                    log_info(f"✅ 卖出操作结果: {'成功' if result else '失败'}")
+                    return result
             else:
                 log_warning(f"未知信号: {signal}")
                 return False
@@ -1327,9 +1351,15 @@ class TradingEngine:
             log_error(f"交易执行失败: {e}")
             return False
     
-    def execute_trade_with_tp_sl(self, signal: str, amount: float, 
+    def execute_trade_with_tp_sl(self, signal: str, amount: float,
                                stop_loss_price: float, take_profit_price: float) -> bool:
         """执行带止盈止损的交易"""
+        log_info(f"🚀 开始执行带止盈止损的交易:")
+        log_info(f"   信号: {signal}")
+        log_info(f"   数量: {amount}")
+        log_info(f"   止损价: ${stop_loss_price:,.2f}")
+        log_info(f"   止盈价: ${take_profit_price:,.2f}")
+        
         if config.get('trading', 'test_mode'):
             log_info(f"🧪 模拟交易: {signal} {amount} @ SL={stop_loss_price} TP={take_profit_price}")
             return True
@@ -1339,18 +1369,31 @@ class TradingEngine:
             
             # 获取当前持仓
             current_position = self.exchange_manager.get_position()
+            log_info(f"📊 当前持仓状态:")
+            if current_position:
+                log_info(f"   方向: {current_position['side']}")
+                log_info(f"   大小: {current_position['size']}")
+                log_info(f"   入场价: ${current_position['entry_price']:,.2f}")
+            else:
+                log_info("   无持仓")
             
             # 执行主交易
             if signal.upper() == 'BUY':
+                log_info("📈 执行买入操作")
                 success = self.order_manager.place_market_order('BUY', amount)
+                log_info(f"✅ 买入操作结果: {'成功' if success else '失败'}")
             elif signal.upper() == 'SELL':
                 # 检查做空权限
+                log_info("📉 执行卖出操作")
                 if not self.short_selling_manager.can_short_sell(current_position):
+                    log_info("   做空权限检查: 不允许做空")
                     if current_position and current_position['side'] == 'long':
                         # 如果是多头仓位，执行平仓
                         close_amount = min(amount, current_position['size'])
+                        log_info(f"   平仓数量: {close_amount} (原始: {amount}, 持仓: {current_position['size']})")
                         if close_amount > 0:
                             success = self.order_manager.place_market_order('SELL', close_amount, reduce_only=True)
+                            log_info(f"✅ 平仓操作结果: {'成功' if success else '失败'}")
                         else:
                             log_info("当前无多头仓位可平仓")
                             return False
@@ -1358,7 +1401,9 @@ class TradingEngine:
                         log_warning("做空功能已禁用，无法开空仓")
                         return False
                 else:
+                    log_info("   做空权限检查: 允许做空")
                     success = self.order_manager.place_market_order('SELL', amount)
+                    log_info(f"✅ 卖出操作结果: {'成功' if success else '失败'}")
             else:
                 log_warning(f"未知信号: {signal}")
                 return False
@@ -1367,17 +1412,29 @@ class TradingEngine:
                 # 获取当前持仓
                 position = self.exchange_manager.get_position()
                 if position and position.get('size', 0) > 0:
+                    log_info("📊 交易成功，设置止盈止损:")
+                    log_info(f"   持仓方向: {position['side']}")
+                    log_info(f"   持仓大小: {position['size']}")
+                    
                     # 设置止盈止损（空头仓位需要反转止损止盈价格）
                     adjusted_sl, adjusted_tp = self._adjust_tp_sl_for_short(
                         position['side'], stop_loss_price, take_profit_price
                     )
                     
-                    self.order_manager.set_stop_loss_take_profit(
-                        position['side'], 
-                        adjusted_sl, 
-                        adjusted_tp, 
+                    log_info(f"   调整后止损价: ${adjusted_sl:,.2f}")
+                    log_info(f"   调整后止盈价: ${adjusted_tp:,.2f}")
+                    
+                    tp_sl_success = self.order_manager.set_stop_loss_take_profit(
+                        position['side'],
+                        adjusted_sl,
+                        adjusted_tp,
                         position['size']
                     )
+                    log_info(f"✅ 止盈止损设置结果: {'成功' if tp_sl_success else '失败'}")
+                else:
+                    log_info("ℹ️ 交易成功但无持仓，跳过止盈止损设置")
+            else:
+                log_info("❌ 主交易执行失败，跳过止盈止损设置")
                 
             return success
                 
@@ -1424,34 +1481,53 @@ class TradingEngine:
         try:
             # 平仓前再次验证持仓状态
             current_position = self.exchange_manager.get_position()
+            log_info(f"📊 平仓前持仓验证:")
             if not current_position:
-                # 没有持仓，直接返回成功（避免错误日志）
+                log_info("   无持仓，无需平仓")
                 return True
+            else:
+                log_info(f"   当前持仓方向: {current_position['side']}")
+                log_info(f"   当前持仓大小: {current_position['size']}")
+                log_info(f"   当前持仓方向与平仓方向匹配: {current_position['side'] == side}")
             
             # 验证持仓方向和数量
             if current_position['side'] != side:
-                # 方向不匹配，无需平仓
+                log_info("   方向不匹配，无需平仓")
                 return True
                 
             # 验证平仓数量不超过持仓数量
             actual_amount = min(amount, current_position['size'])
+            log_info(f"📊 平仓数量计算:")
+            log_info(f"   请求平仓数量: {amount}")
+            log_info(f"   实际可平数量: {actual_amount}")
+            log_info(f"   持仓数量: {current_position['size']}")
+            
             if actual_amount <= 0:
-                # 无需平仓
+                log_info("   无需平仓")
                 return True
             
             # 标准化合约数量 - 智能检测正确的合约单位
             standardized_amount = self.order_manager._standardize_contract_amount(actual_amount)
+            log_info(f"📊 数量标准化:")
+            log_info(f"   标准化前: {actual_amount}")
+            log_info(f"   标准化后: {standardized_amount}")
             
             if standardized_amount <= 0:
                 log_warning(f"⚠️ 标准化后的平仓数量为0，跳过平仓: {actual_amount} -> {standardized_amount}")
                 return True
             
             close_side = 'sell' if side == 'long' else 'buy'
+            log_info(f"📊 平仓参数:")
+            log_info(f"   平仓方向: {close_side}")
+            log_info(f"   平仓数量: {standardized_amount}")
+            log_info(f"   订单类型: 市价单 (reduce_only=True)")
             
             # 使用市价单平仓，设置reduce_only=True
             success = self.order_manager.place_market_order(close_side, standardized_amount, reduce_only=True)
             
-            if not success:
+            if success:
+                log_info(f"✅ 平仓成功: {side} 方向 {actual_amount:.4f} 张")
+            else:
                 log_error(f"❌ 平仓失败: {side} 方向 {actual_amount:.4f} 张")
             
             return success

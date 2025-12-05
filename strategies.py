@@ -962,6 +962,9 @@ class StrategyBehaviorHandler:
         log_info(f"🎯 开始处理 {strategy_type} 策略信号: {signal}")
         log_info(f"   当前价格: ${market_data.get('price', 0):,.2f}")
         log_info(f"   当前持仓: {self._format_position_info(market_data.get('position'))}")
+        log_info(f"   信号置信度: {signal_data.get('confidence', 0):.2f}")
+        log_info(f"   趋势强度: {signal_data.get('trend_strength', 0):.2f}")
+        log_info(f"   市场波动率: {signal_data.get('volatility', 0):.2f}%")
         
         # 获取策略配置
         strategy_config = self._get_strategy_config(strategy_type)
@@ -977,9 +980,13 @@ class StrategyBehaviorHandler:
         
         # 检查是否触发横盘处理
         if signal == 'HOLD':
+            log_info(f"⏸️ 检测到HOLD信号，检查横盘条件...")
             consolidation_result = self._handle_consolidation(market_data, strategy_type, strategy_config)
             if consolidation_result['should_process']:
+                log_info(f"⚠️ 触发横盘处理: {consolidation_result['reason']}")
                 return self._execute_consolidation_action(consolidation_result, market_data, strategy_type)
+            else:
+                log_info(f"✅ 未触发横盘处理: {consolidation_result['reason']}")
             return True
         
         # 根据策略类型执行相应的行为逻辑
@@ -1006,11 +1013,13 @@ class StrategyBehaviorHandler:
                 # 无持仓且BUY → 开多（20-40%仓位）
                 log_info("📈 稳健型：无持仓，执行开仓")
                 position_ratio = strategy_config.get('max_position_ratio', 0.4)  # 使用配置的最大仓位比例
+                log_info(f"   开仓仓位比例: {position_ratio:.1%}")
                 return self._open_position('BUY', market_data, position_ratio, strategy_config)
             else:
                 # 有持仓且BUY → 不补仓，智能更新止盈止损
                 log_info("📈 稳健型：有持仓，智能更新止盈止损")
                 trend_direction = self._determine_trend_direction(signal_data, current_price)
+                log_info(f"   趋势方向: {trend_direction}")
                 return self._update_tp_sl_only(position, current_price, strategy_config, trend_direction)
                 
         elif signal == 'SELL':
@@ -1018,6 +1027,7 @@ class StrategyBehaviorHandler:
             # 不开空，有多仓→立即平仓并取消委托，无多仓→不操作
             if position and position.get('size', 0) > 0 and position.get('side') == 'long':
                 log_info("📉 稳健型：有多仓，执行平仓并取消委托")
+                log_info(f"   持仓大小: {position.get('size', 0)} BTC")
                 return self._close_position_and_cancel_orders(position, market_data, '稳健型平仓')
             else:
                 log_info("📊 稳健型：无多仓，不操作")
@@ -1038,16 +1048,19 @@ class StrategyBehaviorHandler:
                 # 无仓 → 建多（50-60%仓位）
                 log_info("📈 中等型：无持仓，执行开仓（50-60%仓位）")
                 position_ratio = min(strategy_config.get('max_position_ratio', 0.6), 0.6)  # 限制在60%
+                log_info(f"   开仓仓位比例: {position_ratio:.1%}")
                 return self._open_position('BUY', market_data, position_ratio, strategy_config)
             else:
                 # 有仓 → 若趋势增强可补10-20%，同时智能更新止盈止损
                 if self._is_trend_strengthening(signal_data):
                     log_info("📈 中等型：趋势增强，执行加仓10-20%")
                     add_ratio = min(0.2, strategy_config.get('max_position_ratio', 0.6) - self._get_current_position_ratio(position))
+                    log_info(f"   加仓比例: {add_ratio:.1%}")
                     return self._add_position('BUY', market_data, add_ratio, strategy_config)
                 else:
                     log_info("📈 中等型：趋势未增强，智能更新止盈止损")
                     trend_direction = self._determine_trend_direction(signal_data, current_price)
+                    log_info(f"   趋势方向: {trend_direction}")
                     return self._update_tp_sl_only(position, current_price, strategy_config, trend_direction)
                 
         elif signal == 'SELL':
@@ -1075,12 +1088,14 @@ class StrategyBehaviorHandler:
                 # 无仓 → 建多（60-80%）
                 log_info("📈 激进型：无持仓，执行开仓（60-80%仓位）")
                 position_ratio = min(strategy_config.get('max_position_ratio', 0.8), 0.8)  # 限制在80%
+                log_info(f"   开仓仓位比例: {position_ratio:.1%}")
                 return self._open_position('BUY', market_data, position_ratio, strategy_config, use_trailing_stop=True)
             else:
                 # 有仓 → 趋势越强越加仓，使用移动止盈
                 if self._is_strong_trend(signal_data):
                     log_info("📈 激进型：强趋势，执行加仓")
                     add_ratio = min(0.3, strategy_config.get('max_position_ratio', 0.8) - self._get_current_position_ratio(position))
+                    log_info(f"   加仓比例: {add_ratio:.1%}")
                     return self._add_position('BUY', market_data, add_ratio, strategy_config, use_trailing_stop=True)
                 else:
                     log_info("📈 激进型：更新移动止盈")
@@ -1161,6 +1176,7 @@ class StrategyBehaviorHandler:
         
         # 检查连续HOLD信号
         if len(self.consolidation_signal_history) < self.max_consolidation_signals:
+            log_info(f"📊 横盘检测: 信号历史不足 ({len(self.consolidation_signal_history)} < {self.max_consolidation_signals})")
             return False
         
         # 检查最近4次信号是否都是HOLD，并且在2小时时间窗口内
@@ -1178,6 +1194,7 @@ class StrategyBehaviorHandler:
                 break  # 遇到非HOLD信号，重置计数
         
         if recent_hold_signals < self.max_consolidation_signals:
+            log_info(f"📊 横盘检测: 连续HOLD信号不足 ({recent_hold_signals} < {self.max_consolidation_signals})")
             return False
         
         # 检查2小时波动率是否符合策略要求
@@ -1233,6 +1250,11 @@ class StrategyBehaviorHandler:
         current_price = market_data.get('price', 0)
         balance = market_data.get('balance', {}).get('free', 0)
         
+        log_info(f"📈 准备开仓操作:")
+        log_info(f"   当前价格: ${current_price:,.2f}")
+        log_info(f"   可用余额: ${balance:,.2f}")
+        log_info(f"   仓位比例: {position_ratio:.1%}")
+        
         if current_price <= 0 or balance <= 0:
             log_error("❌ 价格或余额无效，无法开仓")
             return False
@@ -1240,6 +1262,10 @@ class StrategyBehaviorHandler:
         # 计算开仓数量
         position_size_usdt = balance * position_ratio
         position_size_btc = position_size_usdt / current_price
+        
+        log_info(f"📊 开仓计算:")
+        log_info(f"   开仓金额: ${position_size_usdt:,.2f}")
+        log_info(f"   开仓数量: {position_size_btc:.4f} BTC")
         
         # 获取止盈止损参数
         tp_sl_params = self._calculate_tp_sl(side, current_price, market_data, strategy_config)
@@ -1277,6 +1303,12 @@ class StrategyBehaviorHandler:
         balance = market_data.get('balance', {}).get('free', 0)
         position = market_data.get('position')
         
+        log_info(f"📈 准备加仓操作:")
+        log_info(f"   当前价格: ${current_price:,.2f}")
+        log_info(f"   可用余额: ${balance:,.2f}")
+        log_info(f"   加仓比例: {add_ratio:.1%}")
+        log_info(f"   当前持仓: {self._format_position_info(position)}")
+        
         if current_price <= 0 or balance <= 0 or not position:
             log_error("❌ 参数无效，无法加仓")
             return False
@@ -1284,6 +1316,10 @@ class StrategyBehaviorHandler:
         # 计算加仓数量
         add_size_usdt = balance * add_ratio
         add_size_btc = add_size_usdt / current_price
+        
+        log_info(f"📊 加仓计算:")
+        log_info(f"   加仓金额: ${add_size_usdt:,.2f}")
+        log_info(f"   加仓数量: {add_size_btc:.4f} BTC")
         
         # 获取止盈止损参数
         tp_sl_params = self._calculate_tp_sl(side, current_price, market_data, strategy_config)

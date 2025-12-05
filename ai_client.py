@@ -315,7 +315,10 @@ class AIClient:
     
     def fuse_signals(self, signals: List[AISignal]) -> Dict[str, Any]:
         """融合多AI信号"""
+        log_info(f"🔍 开始融合AI信号，共收到 {len(signals)} 个信号")
+        
         if not signals:
+            log_warning("⚠️ 没有可用的AI信号，使用回退信号")
             return {
                 'signal': 'HOLD',
                 'confidence': 0.5,
@@ -326,6 +329,7 @@ class AIClient:
 
         if len(signals) == 1:
             signal = signals[0]
+            log_info(f"📊 单信号模式: {signal.provider} -> {signal.signal} (信心: {signal.confidence:.2f})")
             return {
                 'signal': signal.signal,
                 'confidence': signal.confidence,
@@ -346,24 +350,32 @@ class AIClient:
         sell_confidence = sum(s.confidence for s in signals if s.signal == 'SELL') / total_signals
         hold_confidence = sum(s.confidence for s in signals if s.signal == 'HOLD') / total_signals
 
+        log_info(f"🗳️ 投票统计: BUY={buy_votes}, SELL={sell_votes}, HOLD={hold_votes}")
+        log_info(f"📈 信心分布: BUY={buy_confidence:.2f}, SELL={sell_confidence:.2f}, HOLD={hold_confidence:.2f}")
+
         # 确定最终信号
         if buy_votes > sell_votes and buy_votes > hold_votes:
             final_signal = 'BUY'
             confidence = buy_confidence
             reason = f"多AI融合: {buy_votes}/{total_signals}票支持买入"
+            log_info(f"🎯 最终决策: BUY (信心: {confidence:.2f})")
         elif sell_votes > buy_votes and sell_votes > hold_votes:
             final_signal = 'SELL'
             confidence = sell_confidence
             reason = f"多AI融合: {sell_votes}/{total_signals}票支持卖出"
+            log_info(f"🎯 最终决策: SELL (信心: {confidence:.2f})")
         else:
             final_signal = 'HOLD'
             confidence = hold_confidence
             reason = f"多AI融合: {hold_votes}/{total_signals}票支持持仓"
+            log_info(f"🎯 最终决策: HOLD (信心: {confidence:.2f})")
 
         # 增强信心调整
-        confidence *= (max(buy_votes, sell_votes, hold_votes) / total_signals)
+        confidence_multiplier = max(buy_votes, sell_votes, hold_votes) / total_signals
+        confidence *= confidence_multiplier
+        log_info(f"⚖️ 信心调整: 原始信心 × {confidence_multiplier:.2f} = {confidence:.2f}")
 
-        return {
+        result = {
             'signal': final_signal,
             'confidence': confidence,
             'reason': reason,
@@ -387,6 +399,9 @@ class AIClient:
                     'reason': s.reason
                 } for s in signals]
         }
+        
+        log_info(f"✅ AI信号融合完成: {final_signal} (信心: {confidence:.2f})")
+        return result
 
     async def get_ai_signal(self, market_data: Dict[str, Any], provider: str) -> AISignal:
         """获取单个AI提供商的信号"""
