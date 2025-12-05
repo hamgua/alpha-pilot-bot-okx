@@ -773,24 +773,70 @@ class AlphaArenaBot:
             # 3. 获取AI信号
             try:
                 signal_data = self.get_ai_signal({**market_data, **market_state})
-                log_info(f"🤖 AI信号: {signal_data.get('signal', 'HOLD')} (信心: {signal_data.get('confidence', 'LOW')})")
                 
-                # 使用多AI融合的详细理由
-                fusion_reason = signal_data.get('fusion_analysis', {}).get('fusion_reason', '')
-                if fusion_reason:
-                    # 合并理由到一行，移除所有换行符和多余空格
-                    clean_reason = ' '.join(fusion_reason.replace('\n', ' ').replace('\r', ' ').split())
-                    log_info(f"💡 AI理由: {clean_reason}")
-                else:
-                    clean_reason = ' '.join(signal_data.get('reason', '无').replace('\n', ' ').replace('\r', ' ').split())
-                    log_info(f"💡 AI理由: {clean_reason}")
+                # 增强的AI信号日志 - 包含详细的决策分析
+                signal = signal_data.get('signal', 'HOLD')
+                confidence = signal_data.get('confidence', 0.5)
+                reason = signal_data.get('reason', '')
+                
+                log_info(f"🤖 AI信号: {signal} (信心: {confidence:.2f})")
+                
+                # 详细的多AI融合分析
+                fusion_analysis = signal_data.get('fusion_analysis', {})
+                if fusion_analysis:
+                    log_info(f"📊 【AI决策详细分析】")
+                    log_info(f"   总提供商: {fusion_analysis.get('total_providers', 0)}")
+                    log_info(f"   成功提供商: {fusion_analysis.get('successful_providers', 0)}")
+                    log_info(f"   失败提供商: {fusion_analysis.get('failed_providers', 0)}")
+                    log_info(f"   成功率: {fusion_analysis.get('success_rate', 0)*100:.1f}%")
+                    
+                    votes = signal_data.get('votes', {})
+                    if votes:
+                        log_info(f"   投票分布: BUY={votes.get('BUY', 0)}, SELL={votes.get('SELL', 0)}, HOLD={votes.get('HOLD', 0)}")
+                    
+                    confidences = signal_data.get('confidences', {})
+                    if confidences:
+                        log_info(f"   信心分布: BUY={confidences.get('BUY', 0):.2f}, SELL={confidences.get('SELL', 0):.2f}, HOLD={confidences.get('HOLD', 0):.2f}")
+                    
+                    log_info(f"   融合方法: {signal_data.get('fusion_method', 'unknown')}")
+                    log_info(f"   决策理由: {fusion_analysis.get('fusion_reason', reason)}")
+                
+                # 简化的理由显示
+                clean_reason = ' '.join(reason.replace('\n', ' ').replace('\r', ' ').split())
+                log_info(f"💡 AI建议: {clean_reason}")
+                
+                # 基于信号提供具体的交易建议
+                if signal == 'HOLD':
+                    if confidence >= 0.8:
+                        log_info(f"🎯 【交易建议】强烈建议保持观望，等待更明确的市场信号")
+                    elif confidence >= 0.6:
+                        log_info(f"🎯 【交易建议】建议保持观望，市场方向不明确")
+                    else:
+                        log_info(f"🎯 【交易建议】谨慎观望，AI信心较低")
+                        
+                elif signal == 'BUY':
+                    if confidence >= 0.8:
+                        log_info(f"🎯 【交易建议】强烈建议买入，市场出现明显的上涨信号")
+                    elif confidence >= 0.6:
+                        log_info(f"🎯 【交易建议】可以考虑买入，但建议分批建仓")
+                    else:
+                        log_info(f"🎯 【交易建议】谨慎买入，AI信心不足")
+                        
+                elif signal == 'SELL':
+                    if confidence >= 0.8:
+                        log_info(f"🎯 【交易建议】强烈建议卖出，市场出现明显的下跌信号")
+                    elif confidence >= 0.6:
+                        log_info(f"🎯 【交易建议】可以考虑卖出，但建议分批减仓")
+                    else:
+                        log_info(f"🎯 【交易建议】谨慎卖出，AI信心不足")
                 
                 # 保存AI信号到历史记录（用于横盘检测）
                 memory_manager.add_to_history('signals', {
-                    'signal': signal_data.get('signal', 'HOLD'),
-                    'confidence': signal_data.get('confidence', 0.5),
+                    'signal': signal,
+                    'confidence': confidence,
                     'timestamp': datetime.now().isoformat(),
-                    'reason': signal_data.get('reason', '')
+                    'reason': reason,
+                    'fusion_analysis': fusion_analysis
                 })
                 
             except Exception as e:
@@ -803,11 +849,83 @@ class AlphaArenaBot:
             # 5. 处理信号并执行交易决策
             log_info("🔍 处理交易信号...")
             try:
+                # 获取当前持仓状态用于决策分析
+                current_position = market_data.get('position', {})
+                has_position = current_position and current_position.get('size', 0) > 0
+                
+                log_info(f"📊 【当前交易状态分析】")
+                log_info(f"   当前持仓状态: {'有持仓' if has_position else '无持仓'}")
+                if has_position:
+                    log_info(f"   持仓方向: {current_position.get('side', 'unknown')}")
+                    log_info(f"   持仓数量: {current_position.get('size', 0)} BTC")
+                    log_info(f"   入场价格: ${current_position.get('entry_price', 0):.2f}")
+                    unrealized_pnl = current_position.get('unrealized_pnl', 0)
+                    log_info(f"   未实现盈亏: ${unrealized_pnl:.2f}")
+                    if current_position.get('entry_price', 0) > 0:
+                        current_price = market_data.get('price', 0)
+                        pnl_pct = ((current_price - current_position['entry_price']) / current_position['entry_price']) * 100
+                        log_info(f"   盈亏百分比: {pnl_pct:+.2f}%")
+                
+                # 基于信号和持仓状态提供决策分析
+                signal = signal_data.get('signal', 'HOLD')
+                confidence = signal_data.get('confidence', 0.5)
+                
+                log_info(f"📊 【信号执行分析】")
+                log_info(f"   AI信号: {signal}")
+                log_info(f"   信号信心: {confidence:.2f}")
+                log_info(f"   持仓状态: {'持仓中' if has_position else '空仓中'}")
+                
+                # 信号与持仓的匹配分析
+                if signal == 'HOLD':
+                    if has_position:
+                        log_info(f"   🔄 决策分析: 保持现有持仓，不进行调整")
+                        log_info(f"   💡 建议: 继续持观望态度，等待更明确的市场信号")
+                    else:
+                        log_info(f"   ⏸️ 决策分析: 继续空仓观望，不入场交易")
+                        log_info(f"   💡 建议: 耐心等待入场时机，避免盲目交易")
+                        
+                elif signal == 'BUY':
+                    if has_position:
+                        if current_position.get('side') == 'long':
+                            log_info(f"   📈 决策分析: 加仓信号，当前已有多头持仓")
+                            log_info(f"   💡 建议: 可以考虑适量加仓，但注意风险控制")
+                        else:
+                            log_info(f"   🔄 决策分析: 买入信号，但当前持有空头仓位")
+                            log_info(f"   💡 建议: 需要先平掉空头仓位，再考虑买入")
+                    else:
+                        log_info(f"   🚀 决策分析: 买入信号，当前空仓可入场")
+                        log_info(f"   💡 建议: 可以考虑入场做多，设置好止盈止损")
+                        
+                elif signal == 'SELL':
+                    if has_position:
+                        if current_position.get('side') == 'long':
+                            log_info(f"   📉 决策分析: 卖出信号，当前持有多头仓位")
+                            log_info(f"   💡 建议: 考虑平仓或减仓，锁定利润或减少损失")
+                        else:
+                            log_info(f"   📈 决策分析: 卖出信号，当前已有空头持仓")
+                            log_info(f"   💡 建议: 可以考虑加仓做空，但注意风险控制")
+                    else:
+                        log_info(f"   🚀 决策分析: 卖出信号，当前空仓可入场做空")
+                        log_info(f"   💡 建议: 如果允许做空，可以考虑开空仓")
+                
                 success = signal_processor.process_signal(signal_data, market_data)
                 if success:
                     log_info("✅ 信号执行完成")
+                    
+                    # 执行后状态更新
+                    updated_position = trading_engine.get_position_info()
+                    if updated_position['has_position']:
+                        log_info(f"📊 【执行后状态】")
+                        log_info(f"   新持仓方向: {updated_position['side']}")
+                        log_info(f"   新持仓数量: {updated_position['size']} BTC")
+                        log_info(f"   入场价格: ${updated_position['entry_price']:.2f}")
+                    else:
+                        log_info("📊 【执行后状态】继续保持空仓")
+                        
                 else:
                     log_warning("⚠️ 信号执行未完成或无需执行")
+                    log_info("💡 可能原因: 信号与当前状态冲突、风险控制限制、或市场条件不适合")
+                    
             except Exception as e:
                 log_error(f"执行交易决策失败: {e}")
                 return
@@ -955,13 +1073,13 @@ class AlphaArenaBot:
             log_error("❌ 简化执行失败")
 
     def _update_risk_management(self, market_data: Dict[str, Any], market_state: Dict[str, Any]):
-        """更新风险管理"""
+        """更新风险管理 - 增强版，包含详细决策分析"""
         position = market_data.get('position')
         if not position or position.get('size', 0) <= 0:
             log_info("📭 当前无持仓，跳过风险管理更新")
             return
         
-        log_info("📊 检测到持仓，开始风险管理检查...")
+        log_info("📊 【风险管理检查】检测到持仓，开始全面风险评估...")
         
         # 获取详细持仓信息
         current_position = trading_engine.get_position_info()
@@ -975,11 +1093,61 @@ class AlphaArenaBot:
         size = current_position['size']
         unrealized_pnl = current_position['unrealized_pnl']
         
+        log_info(f"📊 【持仓风险分析】")
+        log_info(f"   持仓方向: {side}")
+        log_info(f"   持仓数量: {size} BTC")
+        log_info(f"   入场价格: ${entry_price:.2f}")
+        log_info(f"   当前价格: ${current_price:.2f}")
+        log_info(f"   未实现盈亏: ${unrealized_pnl:.2f}")
+        
         # 计算当前盈亏
         if side == 'long':
             pnl_percentage = (current_price - entry_price) / entry_price * 100
         else:  # short
             pnl_percentage = (entry_price - current_price) / entry_price * 100
+        
+        log_info(f"   盈亏百分比: {pnl_percentage:+.2f}%")
+        
+        # 风险等级评估
+        if abs(pnl_percentage) >= 10:
+            risk_level = "高风险"
+            risk_color = "🔴"
+        elif abs(pnl_percentage) >= 5:
+            risk_level = "中等风险"
+            risk_color = "🟡"
+        else:
+            risk_level = "低风险"
+            risk_color = "🟢"
+        
+        log_info(f"   风险等级: {risk_color} {risk_level}")
+        
+        # 基于盈亏状态提供建议
+        if pnl_percentage > 0:
+            log_info(f"💰 【盈利状态建议】")
+            log_info(f"   • 当前处于盈利状态，考虑设置保护性止盈")
+            log_info(f"   • 可以适当上调止损位，保护已有利润")
+            log_info(f"   • 关注市场是否出现反转信号")
+            
+            if pnl_percentage >= 10:
+                log_info(f"   ⚠️ 盈利较高，注意获利了结的时机")
+            elif pnl_percentage >= 5:
+                log_info(f"   ✅ 盈利良好，可以继续持有观察")
+                
+        elif pnl_percentage < 0:
+            log_info(f"📉 【亏损状态建议】")
+            log_info(f"   • 当前处于亏损状态，严格执行止损纪律")
+            log_info(f"   • 检查是否触及止损位，及时止损")
+            log_info(f"   • 评估是否需要减仓或平仓")
+            
+            if pnl_percentage <= -10:
+                log_info(f"   🚨 亏损较大，考虑立即止损或大幅减仓")
+            elif pnl_percentage <= -5:
+                log_info(f"   ⚠️ 亏损中等，密切关注市场走势")
+        else:
+            log_info(f"⚖️ 【平衡状态建议】")
+            log_info(f"   • 当前接近盈亏平衡点")
+            log_info(f"   • 关注价格突破方向，准备相应操作")
+            log_info(f"   • 保持现有止盈止损设置")
         
         # 价格暴跌保护检查
         if self._check_price_crash_protection(current_position, market_data):
@@ -995,12 +1163,24 @@ class AlphaArenaBot:
                 signal, current_price, market_state, current_position
             )
             
+            log_info(f"📊 【动态止盈止损】")
+            log_info(f"   建议止损价: ${dynamic_tp_sl['stop_loss']:.2f}")
+            log_info(f"   建议止盈价: ${dynamic_tp_sl['take_profit']:.2f}")
+            log_info(f"   止损幅度: {abs((dynamic_tp_sl['stop_loss'] - current_price) / current_price * 100):.2f}%")
+            log_info(f"   止盈幅度: {abs((dynamic_tp_sl['take_profit'] - current_price) / current_price * 100):.2f}%")
+            
             # 更新止盈止损
-            trading_engine.update_risk_management(
+            tp_sl_success = trading_engine.update_risk_management(
                 current_position,
                 dynamic_tp_sl['stop_loss'],
                 dynamic_tp_sl['take_profit']
             )
+            
+            if tp_sl_success:
+                log_info("✅ 止盈止损更新成功")
+            else:
+                log_warning("⚠️ 止盈止损更新失败，使用现有设置")
+                
         except Exception as e:
             log_error(f"风险管理更新失败: {e}")
     
