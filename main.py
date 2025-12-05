@@ -830,7 +830,7 @@ class AlphaArenaBot:
                 log_error(f"系统维护失败: {e}")
             
             log_info(f"{'='*60}")
-            log_info(f"✅ 第 {self.current_cycle} 轮交易周期完成")
+            log_info(f"✅ 第 {self.state.current_cycle} 轮交易周期完成")
             log_info(f"{'='*60}")
             
         except Exception as e:
@@ -843,7 +843,7 @@ class AlphaArenaBot:
                     'level': 'ERROR',
                     'message': str(e),
                     'context': 'trading_cycle',
-                    'cycle': self.current_cycle
+                    'cycle': self.state.current_cycle
                 })
             except Exception:
                 pass
@@ -1076,7 +1076,7 @@ class AlphaArenaBot:
                 close_size = current_size * close_ratio
                 
                 if close_size > 0:
-                    success = trading_engine.close_position(close_size)
+                    success = trading_engine.close_position('long', close_size)
                     if success:
                         log_info(f"✅ 部分平仓成功: {close_size} BTC")
                         return True
@@ -1086,7 +1086,7 @@ class AlphaArenaBot:
                         
             elif action == 'full_close':
                 # 全部平仓
-                success = trading_engine.close_position(position.get('size', 0))
+                success = trading_engine.close_position('long', position.get('size', 0))
                 if success:
                     log_info("✅ 全部平仓成功")
                     return True
@@ -1233,7 +1233,7 @@ class AlphaArenaBot:
             log_info(f"📊 系统统计: {system_stats}")
         
         # 数据管理 - 保存性能指标
-        if self.current_cycle % 10 == 0:  # 每10轮保存一次
+        if self.state.current_cycle % 10 == 0:  # 每10轮保存一次
             try:
                 performance_metrics = {
                     'cycle': self.state.current_cycle,
