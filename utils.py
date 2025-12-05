@@ -232,19 +232,12 @@ class MemoryManager:
         with self._lock:
             if key:
                 if key in self._histories:
-                    self._total_items -= len(self._histories[key])
                     del self._histories[key]
                     return True
                 return False
             else:
-                self._total_items = 0
                 self._histories.clear()
                 return True
-        with self._lock:
-            if key:
-                self._histories.pop(key, None)
-            else:
-                self._histories.clear()
     
     def get_all_keys(self) -> List[str]:
         """获取所有历史记录键
@@ -267,10 +260,28 @@ class MemoryManager:
         """
         with self._lock:
             return {
-                'total_items': self._total_items,
+                'total_items': sum(len(h) for h in self._histories.values()),
+                'keys_count': len(self._histories),
+                'max_per_key': self._max_history
+            }
+    
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """获取内存统计信息
+        
+        获取内存管理器的内存使用统计
+        
+        Returns:
+            Dict[str, Any]: 内存统计信息字典
+        """
+        with self._lock:
+            total_items = sum(len(h) for h in self._histories.values())
+            return {
+                'total_items': total_items,
                 'keys_count': len(self._histories),
                 'max_per_key': self._max_history,
-                'memory_usage': self._total_items * 8  # 粗略估计
+                'memory_usage': total_items * 8,  # 粗略估计（字节）
+                'memory_usage_mb': (total_items * 8) / (1024 * 1024),  # 转换为MB
+                'status': 'healthy' if total_items < self._max_history * len(self._histories) else 'warning'
             }
     
     def cleanup_old_entries(self, max_age: int = 3600) -> int:
@@ -286,12 +297,19 @@ class MemoryManager:
         """
         # 简化实现，实际应该根据时间戳清理
         return 0
+    
+    def force_cleanup(self) -> int:
+        """强制清理内存
+        
+        清理历史记录以释放内存
+        
+        Returns:
+            int: 清理的记录数量
+        """
         with self._lock:
-            return {
-                'total_items': sum(len(h) for h in self._histories.values()),
-                'keys_count': len(self._histories),
-                'max_per_key': self._max_history
-            }
+            total_cleared = sum(len(h) for h in self._histories.values())
+            self._histories.clear()
+            return total_cleared
 
 class SystemMonitor:
     """系统监控器"""
