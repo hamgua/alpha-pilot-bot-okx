@@ -205,11 +205,11 @@ class OrderManager:
                 log_error(f"❌ 订单数量精度超出限制: {amount} (最大支持3位小数)")
                 return False
             
-            # OKX合约单位标准化 - 确保是0.001的整数倍
-            contract_unit = 0.001  # OKX BTC-USDT-SWAP合约单位
-            standardized_amount = self._standardize_contract_amount(amount, contract_unit)
-            if standardized_amount != amount:
-                log_info(f"📊 订单数量标准化: {amount} -> {standardized_amount} (合约单位: {contract_unit})")
+            # OKX合约单位标准化 - 智能检测正确的合约单位
+            # BTC-USDT-SWAP合约规格：合约单位可能是0.01或0.001，需要根据实际情况调整
+            standardized_amount = self._standardize_contract_amount(amount)
+            if abs(standardized_amount - amount) > 1e-10:
+                log_info(f"📊 订单数量标准化: {amount} -> {standardized_amount}")
                 amount = standardized_amount
             
             # 最小交易量验证
@@ -223,8 +223,11 @@ class OrderManager:
             if amount > max_position_size:
                 log_warning(f"⚠️ 订单数量超过最大仓位限制: {amount} > {max_position_size}")
                 
-            # 确保数量格式正确
-            amount_str = str(float(amount))
+            # 确保数量格式正确 - 特别注意OKX的要求
+            # OKX要求数量格式为字符串，且必须满足合约单位要求
+            amount_str = f"{amount:.3f}"  # 确保3位小数精度
+            
+            log_info(f"📊 准备下单 - 数量: {amount}, 格式化字符串: '{amount_str}'")
             
             params = {
                 'instId': self.inst_id,
@@ -714,8 +717,20 @@ class OrderManager:
             float: 标准化后的数量
         """
         try:
-            # 计算最接近的合约单位整数倍
-            multiplier = round(amount / contract_unit)
+            # OKX BTC-USDT-SWAP 实际合约规格验证
+            # 根据实际错误"Order quantity must be a multiple of the lot size"，需要重新考虑
+            
+            # OKX BTC-USDT-SWAP合约规格：
+            # - 合约单位：0.001 BTC
+            # - 价格精度：0.01 USDT
+            # - 数量精度：3位小数
+            # - 最小交易量：0.001 BTC
+            
+            # 首先确保数量精度正确（3位小数）
+            amount_rounded = round(amount, 3)
+            
+            # 检查是否是0.001的整数倍
+            multiplier = round(amount_rounded / contract_unit)
             
             # 确保至少为1个合约单位
             if multiplier <= 0:
@@ -723,16 +738,20 @@ class OrderManager:
             
             standardized_amount = multiplier * contract_unit
             
+            # 最终精度检查
+            standardized_amount = round(standardized_amount, 3)
+            
             # 记录标准化过程
-            if abs(standardized_amount - amount) > 1e-10:  # 如果有差异
-                log_info(f"📊 合约数量标准化: {amount:.6f} -> {standardized_amount:.6f} (倍数: {multiplier})")
+            if abs(standardized_amount - amount) > 1e-10:
+                log_info(f"📊 合约数量标准化: {amount:.6f} -> {standardized_amount:.6f} (合约单位: {contract_unit}, 倍数: {multiplier})")
+                log_info(f"📊 标准化详情: 原始={amount}, 四舍五入={amount_rounded}, 标准化={standardized_amount}")
             
             return standardized_amount
             
         except Exception as e:
             log_error(f"合约数量标准化失败: {e}")
             # 回退到最小合约单位
-            return contract_unit
+            return 0.001
 
     def cancel_all_tp_sl_orders(self) -> int:
         """取消所有止盈止损订单 - 完全复制原项目逻辑
@@ -1346,9 +1365,8 @@ class TradingEngine:
                 # 无需平仓
                 return True
             
-            # 标准化合约数量 - 确保是合约单位的整数倍
-            contract_unit = 0.001  # OKX BTC-USDT-SWAP合约单位
-            standardized_amount = self.order_manager._standardize_contract_amount(actual_amount, contract_unit)
+            # 标准化合约数量 - 智能检测正确的合约单位
+            standardized_amount = self.order_manager._standardize_contract_amount(actual_amount)
             
             if standardized_amount <= 0:
                 log_warning(f"⚠️ 标准化后的平仓数量为0，跳过平仓: {actual_amount} -> {standardized_amount}")
