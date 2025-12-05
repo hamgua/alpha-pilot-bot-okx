@@ -332,7 +332,11 @@ class AlphaArenaBot:
         
         try:
             # 检查时间有效性
-            signal_time = datetime.fromisoformat(cached_signal.get('timestamp', ''))
+            timestamp = cached_signal.get('timestamp', '')
+            if not timestamp:
+                return False
+                
+            signal_time = datetime.fromisoformat(timestamp)
             age_seconds = (datetime.now() - signal_time).total_seconds()
             max_age = config.get('ai', 'cache_duration', 900)
             
@@ -373,14 +377,22 @@ class AlphaArenaBot:
         
         # 查找最近的有效信号
         for signal in reversed(history):
-            signal_time = datetime.fromisoformat(signal.get('timestamp', ''))
-            age_seconds = (datetime.now() - signal_time).total_seconds()
-            
-            # 只考虑2小时内的信号
-            if age_seconds < 7200:
-                # 检查信号质量
-                if signal.get('confidence', 0) > 0.7:
-                    return signal
+            timestamp = signal.get('timestamp', '')
+            if not timestamp:
+                continue
+                
+            try:
+                signal_time = datetime.fromisoformat(timestamp)
+                age_seconds = (datetime.now() - signal_time).total_seconds()
+                
+                # 只考虑2小时内的信号
+                if age_seconds < 7200:
+                    # 检查信号质量
+                    if signal.get('confidence', 0) > 0.7:
+                        return signal
+            except ValueError:
+                # 跳过无效的时间戳格式
+                continue
         
         return None
     
