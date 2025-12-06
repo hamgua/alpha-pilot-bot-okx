@@ -544,6 +544,202 @@ class AlphaArenaBot:
         signal_age = time.time() - self.last_signal.get('timestamp', 0)
         return signal_age > config.get('ai', 'cache_duration')
     
+    def _prepare_ai_market_data(self, market_data: Dict[str, Any], market_state: Dict[str, Any]) -> Dict[str, Any]:
+        """准备AI分析所需的完整市场数据"""
+        try:
+            # 获取价格历史用于技术指标计算
+            price_history = self._get_price_history_for_analysis()
+            
+            # 计算技术指标
+            technical_data = {}
+            trend_analysis = {}
+            
+            if price_history and len(price_history.get('close', [])) >= 14:
+                closes = price_history['close']
+                highs = price_history['high']
+                lows = price_history['low']
+                
+                # 计算RSI
+                if len(closes) >= 14:
+                    rsi = self._calculate_rsi(closes, 14)
+                    technical_data['rsi'] = rsi
+                
+                # 计算MACD
+                if len(closes) >= 26:
+                    macd_data = self._calculate_macd(closes)
+                    technical_data.update(macd_data)
+                
+                # 计算均线状态
+                if len(closes) >= 20:
+                    ma_data = self._calculate_ma_status(closes)
+                    technical_data.update(ma_data)
+                    trend_analysis['overall'] = ma_data.get('ma_trend', 'N/A')
+            
+            # 获取AI信号历史
+            ai_signal_history = []
+            try:
+                signal_history = memory_manager.get_history('signals', limit=10)
+                if signal_history:
+                    ai_signal_history = [
+                        {
+                            'signal': sig.get('signal', 'HOLD'),
+                            'confidence': sig.get('confidence', 0.5),
+                            'timestamp': sig.get('timestamp', '')
+                        }
+                        for sig in signal_history[-5:]  # 最近5个信号
+                    ]
+            except Exception as e:
+                log_warning(f"获取AI信号历史失败: {e}")
+            
+            # 构建完整的市场数据结构
+            enhanced_market_data = {
+                **market_data,
+                **market_state,
+                'technical_data': technical_data,
+                'trend_analysis': trend_analysis,
+                'price_history': closes if 'closes' in locals() else [],
+                'signal_history': ai_signal_history,
+                'price_change_pct': market_data.get('price_change_pct', 0)
+            }
+            
+            return enhanced_market_data
+            
+        except Exception as e:
+            log_error(f"准备AI市场数据失败: {e}")
+            # 返回基础数据
+            return {**market_data, **market_state, 'technical_data': {}, 'trend_analysis': {}}
+    
+    def _calculate_rsi(self, prices: List[float], period: int = 14) -> float:
+        """计算RSI指标"""
+        try:
+            if len(prices) < period + 1:
+                return 50.0
+            
+            # 计算价格变化
+            deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+            
+            # 分离上涨和下跌
+            gains = [d if d > 0 else 0 for d in deltas]
+            losses = [-d if d < 0 else 0 for d in deltas]
+            
+            # 计算平均收益和损失
+            avg_gain = sum(gains[-period:]) / period
+            avg_loss = sum(losses[-period:]) / period
+            
+            if avg_loss == 0:
+                return 100.0
+            
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            return max(0, min(100, rsi))
+            
+        except Exception as e:
+            log_warning(f"RSI计算失败: {e}")
+            return 50.0
+    
+    def _calculate_macd(self, prices: List[float]) -> Dict[str, Any]:
+        """计算MACD指标"""
+        try:
+            if len(prices) < 26:
+                return {'macd': 'N/A', 'macd_signal': 'N/A', 'macd_histogram': 'N/A'}
+            
+            # 计算EMA
+            def ema(values, period):
+                if len(values) < period:
+                    return None
+                alpha = 2 / (period + 1)
+                ema_values = [sum(values[:period]) / period]
+                for i in range(period, len(values)):
+                    ema_values.append(alpha * values[i] + (1 - alpha) * ema_values[-1])
+                return ema_values
+            
+            # 计算12日和26日EMA
+            ema12 = ema(prices, 12)
+            ema26 = ema(prices, 26)
+            
+            if not ema12 or not ema26:
+                return {'macd': 'N/A', 'macd_signal': 'N/A', 'macd_histogram': 'N/A'}
+            
+            # 确保长度一致
+            min_len = min(len(ema12), len(ema26))
+            ema12 = ema12[-min_len:]
+            ema26 = ema26[-min_len:]
+            
+            # 计算MACD线
+            macd_line = [ema12[i] - ema26[i] for i in range(min_len)]
+            
+            # 计算信号线(9日EMA)
+            signal_line = ema(macd_line, 9)
+            
+            if not signal_line or len(signal_line) < 1:
+                return {'macd': 'N/A', 'macd_signal': 'N/A', 'macd_histogram': 'N/A'}
+            
+            # 计算柱状图
+            current_macd = macd_line[-1]
+            current_signal = signal_line[-1]
+            histogram = current_macd - current_signal
+            
+            # 判断MACD状态
+            if current_macd > current_signal and current_macd > 0:
+                macd_status = "金叉看涨"
+            elif current_macd < current_signal and current_macd < 0:
+                macd_status = "死叉看跌"
+            else:
+                macd_status = "中性震荡"
+            
+            return {
+                'macd': macd_status,
+                'macd_value': current_macd,
+                'macd_signal': current_signal,
+                'macd_histogram': histogram
+            }
+            
+        except Exception as e:
+            log_warning(f"MACD计算失败: {e}")
+            return {'macd': 'N/A', 'macd_signal': 'N/A', 'macd_histogram': 'N/A'}
+    
+    def _calculate_ma_status(self, prices: List[float]) -> Dict[str, Any]:
+        """计算均线状态"""
+        try:
+            if len(prices) < 20:
+                return {'ma_trend': 'N/A', 'ma_position': 'N/A'}
+            
+            # 计算不同周期均线
+            ma5 = sum(prices[-5:]) / 5
+            ma10 = sum(prices[-10:]) / 10
+            ma20 = sum(prices[-20:]) / 20
+            
+            current_price = prices[-1]
+            
+            # 判断均线排列
+            if ma5 > ma10 > ma20:
+                ma_trend = "多头排列"
+            elif ma5 < ma10 < ma20:
+                ma_trend = "空头排列"
+            else:
+                ma_trend = "震荡排列"
+            
+            # 判断价格相对均线位置
+            if current_price > ma5 and current_price > ma10 and current_price > ma20:
+                ma_position = "均线上方"
+            elif current_price < ma5 and current_price < ma10 and current_price < ma20:
+                ma_position = "均线下方"
+            else:
+                ma_position = "均线附近"
+            
+            return {
+                'ma_trend': ma_trend,
+                'ma_position': ma_position,
+                'ma5': ma5,
+                'ma10': ma10,
+                'ma20': ma20
+            }
+            
+        except Exception as e:
+            log_warning(f"均线状态计算失败: {e}")
+            return {'ma_trend': 'N/A', 'ma_position': 'N/A'}
+
     def analyze_market_state(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """分析市场状态
         
@@ -790,7 +986,9 @@ class AlphaArenaBot:
             
             # 3. 获取AI信号
             try:
-                signal_data = self.get_ai_signal({**market_data, **market_state})
+                # 准备增强的AI市场数据，包含完整的技术指标
+                enhanced_market_data = self._prepare_ai_market_data(market_data, market_state)
+                signal_data = self.get_ai_signal(enhanced_market_data)
                 
                 # 增强的AI信号日志 - 包含详细的决策分析
                 signal = signal_data.get('signal', 'HOLD')

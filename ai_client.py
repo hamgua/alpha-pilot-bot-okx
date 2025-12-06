@@ -180,7 +180,8 @@ class AIClient:
         return self._build_enhanced_prompt('default', market_data)
     
     def _build_enhanced_prompt(self, provider: str, market_data: Dict[str, Any]) -> str:
-        """构建增强的AI提示词 - 为不同提供商定制"""
+        """构建专业级AI提示词 - 融合之前项目的优势"""
+        
         # 安全获取基础数据
         price = float(market_data.get('price', 0))
         trend = str(market_data.get('trend_strength', '震荡'))
@@ -193,70 +194,221 @@ class AIClient:
         entry_price = float(position.get('entry_price', 0))
         unrealized_pnl = float(position.get('unrealized_pnl', 0))
         
+        # 获取技术指标数据
+        technical_data = market_data.get('technical_data', {})
+        rsi = float(technical_data.get('rsi', 50))
+        macd = technical_data.get('macd', 'N/A')
+        ma_status = technical_data.get('ma_status', 'N/A')
+        
+        # 获取趋势分析数据
+        trend_analysis = market_data.get('trend_analysis', {})
+        overall_trend = trend_analysis.get('overall', 'N/A')
+        
+        # 计算价格位置（相对高低位置）
+        price_history = market_data.get('price_history', [])
+        price_position = 50  # 默认中位
+        if price_history and len(price_history) >= 20:
+            recent_prices = price_history[-20:]
+            min_price = min(recent_prices)
+            max_price = max(recent_prices)
+            if max_price > min_price:
+                price_position = ((price - min_price) / (max_price - min_price)) * 100
+        
+        # 计算价格变化
+        price_change_pct = float(market_data.get('price_change_pct', 0))
+        
         # 构建持仓状态描述
         if position_size <= 0:
             position_desc = "空仓"
+            position_text = "💰 当前无持仓，可灵活操作"
         else:
             position_desc = f"多仓 {position_size}张, 入场价 ${entry_price:.2f}, 未实现盈亏 ${unrealized_pnl:.2f}"
+            pnl_pct = ((price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+            position_text = f"📊 持仓状态: {position_size}BTC @ ${entry_price:.2f} (盈亏: {pnl_pct:+.2f}%)"
         
-        # 为不同提供商添加个性化分析角度
-        provider_focus = {
-            'deepseek': "请重点关注技术面分析和趋势识别，结合量价关系给出专业判断。",
-            'kimi': "请从基本面和市场情绪角度分析，考虑宏观经济因素和投资者心理。",
-            'qwen': "请运用量化分析方法，基于统计模型和概率论给出数据驱动的建议。",
-            'openai': "请采用综合分析方法，平衡技术面、基本面和风险管理因素。",
-            'default': "请基于提供的市场数据，给出专业的交易建议。"
+        # 获取AI信号历史
+        last_signal_info = ""
+        signal_history = market_data.get('signal_history', [])
+        if signal_history:
+            last_signal = signal_history[-1]
+            last_signal_info = f"🔄 上次信号: {last_signal.get('signal', 'N/A')} (信心: {last_signal.get('confidence', 0):.1f})"
+        
+        # 构建技术指标状态
+        rsi_status = "超卖" if rsi < 35 else "超买" if rsi > 70 else "正常"
+        
+        # 构建博弈策略权重
+        buy_weight_multiplier = 1.0
+        if price_position < 25:  # 价格低位
+            buy_weight_multiplier = 1.5
+        elif price_position > 75:  # 价格高位
+            buy_weight_multiplier = 0.7
+        
+        # 检测震荡市条件
+        is_consolidation = (
+            atr_pct < 1.5 and
+            abs(price_change_pct) < 4 and
+            price_position > 25 and
+            price_position < 75
+        )
+        
+        # 构建风控提示
+        tp_sl_hint = ""
+        if is_consolidation:
+            tp_sl_hint = "⚠️ 震荡市: 止盈0.8%，止损0.5%，仓位降低至60%"
+        elif atr_pct > 3.0:
+            tp_sl_hint = "⚠️ 高波动: 扩大止损范围，谨慎操作"
+        else:
+            tp_sl_hint = "✅ 正常波动: 标准止盈止损设置"
+        
+        # 构建市场情绪
+        sentiment_text = ""
+        if rsi < 30:
+            sentiment_text = "📉 市场情绪: 极度恐慌，可能反弹"
+        elif rsi > 70:
+            sentiment_text = "📈 市场情绪: 极度贪婪，可能回调"
+        elif is_consolidation:
+            sentiment_text = "➡️ 市场情绪: 震荡观望，等待方向"
+        else:
+            sentiment_text = "😐 市场情绪: 相对平衡"
+        
+        # 为不同提供商定制专业分析框架
+        provider_frameworks = {
+            'deepseek': """
+【🎯 技术面分析框架】
+1. 价格位置分析: 当前处于{price_position:.1f}%位置
+2. 指标状态: RSI={rsi:.1f}({rsi_status}), MACD={macd}
+3. 趋势判断: {overall_trend}
+4. 支撑阻力: 基于近期高低点分析
+5. 量能配合: 观察成交量变化
+
+【📊 震荡市识别】
+{"✅" if is_consolidation else "❌"} 震荡条件: 波动<{atr_pct:.1f}%, 价格变化<{price_change_pct:.1f}%
+区间策略: 低位买入权重={buy_weight_multiplier:.1f}x
+""",
+            'kimi': """
+【📈 市场情绪分析】
+{sentiment_text}
+资金流向: 观察主力资金动向
+新闻影响: 考虑宏观事件影响
+投资者心理: 贪婪恐慌指数分析
+
+【🎯 博弈策略】
+价格低位权重: {buy_weight_multiplier:.1f}x
+超卖信号: {"✅" if rsi < 35 else "❌"}
+低波动机会: {"✅" if atr_pct < 1.5 else "❌"}
+""",
+            'qwen': """
+【📊 量化分析模型】
+波动率分析: ATR={atr_pct:.2f}%
+趋势强度: {trend}
+统计概率: 基于历史数据回测
+风险收益比: 动态计算最优仓位
+
+【⚠️ 风险控制】
+{tp_sl_hint}
+仓位建议: 基于凯利公式计算
+止损概率: 基于波动率模型
+""",
+            'openai': """
+【🔍 综合分析框架】
+技术面: RSI={rsi:.1f}, 趋势={overall_trend}
+基本面: {sentiment_text}
+风险管理: {tp_sl_hint}
+市场结构: {"震荡" if is_consolidation else "趋势"}
+
+【📋 决策矩阵】
+多重确认: 技术+情绪+风险综合评分
+独立判断: 避免羊群效应
+动态调整: 根据市场状态实时修正
+""",
+            'default': """
+【📊 市场分析】
+价格: ${price:.2f} (位置: {price_position:.1f}%)
+波动: {atr_pct:.2f}% ({volatility})
+技术: RSI={rsi:.1f} ({rsi_status})
+持仓: {position_text}
+"""
         }
         
-        focus_instruction = provider_focus.get(provider, provider_focus['default'])
+        analysis_framework = provider_frameworks.get(provider, provider_frameworks['default'])
         
-        # 添加随机性因素，让相同市场条件下可能产生不同判断
+        # 添加随机性因素
         import random
-        random_seed = f"{provider}_{int(time.time() / 300)}"  # 每5分钟变化一次
+        random_seed = f"{provider}_{int(time.time() / 300)}"
         random.seed(hash(random_seed))
         
-        # 根据提供商调整分析重点
-        if provider == 'deepseek':
-            technical_indicators = ["RSI", "MACD", "布林带", "成交量"]
-            focus_area = random.choice(technical_indicators)
-            extra_instruction = f"重点分析{focus_area}指标的表现。"
-        elif provider == 'kimi':
-            market_sentiments = ["恐慌指数", "贪婪指数", "市场情绪", "资金流向"]
-            focus_area = random.choice(market_sentiments)
-            extra_instruction = f"请考虑当前{focus_area}对市场的影响。"
-        elif provider == 'qwen':
-            risk_factors = ["波动率风险", "流动性风险", "系统性风险", "黑天鹅事件"]
-            focus_area = random.choice(risk_factors)
-            extra_instruction = f"请评估{focus_area}的可能性和影响。"
-        else:
-            extra_instruction = ""
+        # 震荡市专用策略
+        consolidation_strategy = ""
+        if is_consolidation:
+            consolidation_strategy = f"""
+【🎯 震荡市专用策略】
+🔄 区间交易规则：
+1. 靠近支撑位（<25%）+ 反转信号 → HIGH信心BUY
+2. 靠近阻力位（>75%）+ 反转信号 → HIGH信心SELL
+3. 区间中点（40-60%）+ 明确信号 → MEDIUM信心交易
+4. 区间突破立即止损（0.3%）
+
+⚠️ 震荡市风控：
+- 每日最多2次交易
+- 盈利0.8%立即止盈
+- 亏损0.5%立即止损
+- 仓位降低至60%
+- 最长持仓2小时
+
+🚫 禁止交易：
+- 波动率<1.5%（无行情）
+- 无明确区间形成
+- 区间太窄（<0.5%）或太宽（>4%）
+"""
         
         prompt = f"""
-        你是一个专业的加密货币交易分析师。{focus_instruction}
-        {extra_instruction}
-        
-        当前市场分析：
-        - 当前价格: ${price:.2f}
-        - 市场趋势: {trend}
-        - 波动率: {volatility} ({atr_pct:.2f}%)
-        - 持仓状态: {position_desc}
-        
-        请基于以上数据，给出交易建议：
-        1. 信号类型：BUY（买入）/SELL（卖出）/HOLD（观望）
-        2. 信心等级：HIGH（高）/MEDIUM（中）/LOW（低）
-        3. 详细分析理由（请从不同角度分析，避免与其他分析师得出完全相同的结论）
-        4. 风险提示
-        
-        请以JSON格式回复，包含以下字段：
-        {{
-            "signal": "BUY/SELL/HOLD",
-            "confidence": "HIGH/MEDIUM/LOW",
-            "reason": "详细分析理由",
-            "risk": "风险提示"
-        }}
-        
-        注意：请给出独立的判断，不要简单地跟随市场共识。
-        """
+你是专业的BTC波段交易大师，专注精准抄底和趋势跟踪。
+
+{analysis_framework}
+
+【📊 核心市场数据】
+当前价格: ${price:,.2f} (相对位置: {price_position:.1f}%)
+价格变化: {price_change_pct:+.2f}%
+ATR波动率: {atr_pct:.2f}%
+市场趋势: {trend}
+整体技术: {overall_trend}
+
+【💰 持仓状态】
+{position_text}
+{last_signal_info}
+
+【🔧 技术分析】
+RSI: {rsi:.1f} ({rsi_status})
+MACD: {macd}
+均线状态: {ma_status}
+
+{consolidation_strategy}
+
+【⚠️ 风险控制】
+{tp_sl_hint}
+仓位管理: 基于价格位置动态调整
+止损设置: 根据ATR波动率实时计算
+
+【🎯 交易决策要求】
+1. 信号类型：BUY（买入）/SELL（卖出）/HOLD（观望）
+2. 信心等级：HIGH（高）/MEDIUM（中）/LOW（低）
+3. 详细分析理由（包含技术面、情绪面、风险分析）
+4. 具体风险提示和止损建议
+
+【⚡ 关键提醒】
+- 给出独立判断，不跟随市场共识
+- 震荡市严格遵循区间交易规则
+- 高波动时扩大止损，低波动时收紧止损
+- 永远把风险控制放在第一位
+
+请以JSON格式回复，包含以下字段：
+{{
+    "signal": "BUY/SELL/HOLD",
+    "confidence": "HIGH|MEDIUM|LOW",
+    "reason": "详细分析理由（不少于100字）",
+    "risk": "具体风险提示和止损建议"
+}}
+"""
         return prompt
     
     def _parse_ai_response(self, provider: str, response_data: Dict[str, Any]) -> Optional[AISignal]:
