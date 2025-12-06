@@ -91,6 +91,179 @@ class OptimizationResult:
 
 
 # =============================================================================
+# 状态管理器 - 用于数据持久化
+# =============================================================================
+
+class StateManager:
+    """状态管理器 - 管理需要持久化的策略状态数据"""
+    
+    def __init__(self, state_file: str = "strategy_state.json"):
+        self.state_file = Path(state_file)
+        self.state_data = {}
+        self._load_state()
+    
+    def _load_state(self):
+        """加载状态数据"""
+        try:
+            if self.state_file.exists():
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    self.state_data = json.load(f)
+                log_info(f"✅ 成功加载策略状态数据: {len(self.state_data)} 项")
+            else:
+                log_info("ℹ️ 策略状态文件不存在，创建新的状态数据")
+                self.state_data = self._get_default_state()
+                self._save_state()
+        except Exception as e:
+            log_warning(f"⚠️ 加载策略状态失败: {e}，使用默认状态")
+            self.state_data = self._get_default_state()
+    
+    def _save_state(self):
+        """保存状态数据"""
+        try:
+            # 确保目录存在
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self.state_file, 'w', encoding='utf-8') as f:
+                json.dump(self.state_data, f, indent=2, ensure_ascii=False, default=str)
+            log_info("✅ 策略状态数据已保存")
+        except Exception as e:
+            log_error(f"❌ 保存策略状态失败: {e}")
+    
+    def _get_default_state(self) -> Dict[str, Any]:
+        """获取默认状态数据"""
+        return {
+            'consecutive_hold_count': 0,
+            'consolidation_signal_history': [],
+            'price_history': [],
+            'position_add_count': {},
+            'trailing_stop_data': {},
+            'last_signal_type': None,
+            'is_consolidation_active': False,
+            'partial_close_executed': False,
+            'consolidation_history': [],
+            'last_update': datetime.now().isoformat()
+        }
+    
+    def get_state(self, key: str, default=None):
+        """获取状态值"""
+        return self.state_data.get(key, default)
+    
+    def set_state(self, key: str, value: Any):
+        """设置状态值"""
+        self.state_data[key] = value
+        self.state_data['last_update'] = datetime.now().isoformat()
+        self._save_state()
+    
+    def update_state(self, updates: Dict[str, Any]):
+        """批量更新状态"""
+        self.state_data.update(updates)
+        self.state_data['last_update'] = datetime.now().isoformat()
+        self._save_state()
+    
+    def get_consecutive_hold_count(self) -> int:
+        """获取连续HOLD信号计数"""
+        return self.get_state('consecutive_hold_count', 0)
+    
+    def set_consecutive_hold_count(self, count: int):
+        """设置连续HOLD信号计数"""
+        self.set_state('consecutive_hold_count', count)
+    
+    def get_consolidation_signal_history(self) -> List[Tuple[str, datetime]]:
+        """获取横盘信号历史"""
+        history = self.get_state('consolidation_signal_history', [])
+        # 转换时间戳字符串为datetime对象
+        converted_history = []
+        for signal, timestamp_str in history:
+            try:
+                if isinstance(timestamp_str, str):
+                    timestamp = datetime.fromisoformat(timestamp_str)
+                else:
+                    timestamp = timestamp_str
+                converted_history.append((signal, timestamp))
+            except:
+                continue
+        return converted_history
+    
+    def set_consolidation_signal_history(self, history: List[Tuple[str, datetime]]):
+        """设置横盘信号历史"""
+        # 转换datetime对象为可序列化的字符串
+        serializable_history = []
+        for signal, timestamp in history:
+            serializable_history.append((signal, timestamp.isoformat()))
+        self.set_state('consolidation_signal_history', serializable_history)
+    
+    def get_price_history(self) -> List[Tuple[float, datetime]]:
+        """获取价格历史"""
+        history = self.get_state('price_history', [])
+        # 转换时间戳字符串为datetime对象
+        converted_history = []
+        for price, timestamp_str in history:
+            try:
+                if isinstance(timestamp_str, str):
+                    timestamp = datetime.fromisoformat(timestamp_str)
+                else:
+                    timestamp = timestamp_str
+                converted_history.append((float(price), timestamp))
+            except:
+                continue
+        return converted_history
+    
+    def set_price_history(self, history: List[Tuple[float, datetime]]):
+        """设置价格历史"""
+        # 转换datetime对象为可序列化的字符串
+        serializable_history = []
+        for price, timestamp in history:
+            serializable_history.append((float(price), timestamp.isoformat()))
+        self.set_state('price_history', serializable_history)
+    
+    def get_position_add_count(self) -> Dict[str, int]:
+        """获取加仓次数记录"""
+        return self.get_state('position_add_count', {})
+    
+    def set_position_add_count(self, count_dict: Dict[str, int]):
+        """设置加仓次数记录"""
+        self.set_state('position_add_count', count_dict)
+    
+    def get_trailing_stop_data(self) -> Dict[str, Any]:
+        """获取移动止盈数据"""
+        return self.get_state('trailing_stop_data', {})
+    
+    def set_trailing_stop_data(self, data: Dict[str, Any]):
+        """设置移动止盈数据"""
+        self.set_state('trailing_stop_data', data)
+    
+    def get_last_signal_type(self) -> Optional[str]:
+        """获取最后信号类型"""
+        return self.get_state('last_signal_type')
+    
+    def set_last_signal_type(self, signal_type: str):
+        """设置最后信号类型"""
+        self.set_state('last_signal_type', signal_type)
+    
+    def get_consolidation_state(self) -> Dict[str, Any]:
+        """获取横盘状态"""
+        return {
+            'is_consolidation_active': self.get_state('is_consolidation_active', False),
+            'partial_close_executed': self.get_state('partial_close_executed', False),
+            'consolidation_history': self.get_state('consolidation_history', [])
+        }
+    
+    def set_consolidation_state(self, state: Dict[str, Any]):
+        """设置横盘状态"""
+        self.update_state({
+            'is_consolidation_active': state.get('is_consolidation_active', False),
+            'partial_close_executed': state.get('partial_close_executed', False),
+            'consolidation_history': state.get('consolidation_history', [])
+        })
+    
+    def reset_state(self):
+        """重置所有状态为默认值"""
+        self.state_data = self._get_default_state()
+        self._save_state()
+        log_info("🔄 策略状态已重置为默认值")
+
+
+# =============================================================================
 # 市场分析器
 # =============================================================================
 
@@ -942,18 +1115,23 @@ class StrategyBehaviorHandler:
     
     def __init__(self, trading_engine=None):
         self.trading_engine = trading_engine
-        self.consolidation_signal_history = []  # 横盘信号历史 [(signal, timestamp), ...]
+        self.state_manager = StateManager()  # 状态管理器
+        
+        # 从状态管理器加载数据
+        self.consolidation_signal_history = self.state_manager.get_consolidation_signal_history()
         self.max_consolidation_signals = 4  # 最近4次信号
         self.consolidation_time_window = 120  # 2小时（分钟）
-        self.position_add_count = {}  # 加仓次数记录
-        self.trailing_stop_data = {}  # 移动止盈数据
-        self.price_history = []  # 价格历史 [(price, timestamp), ...]
+        self.position_add_count = self.state_manager.get_position_add_count()
+        self.trailing_stop_data = self.state_manager.get_trailing_stop_data()
+        self.price_history = self.state_manager.get_price_history()
         self.price_history_window = 120  # 2小时价格历史（分钟）
-        self.last_signal_type = None
-        self.consecutive_hold_count = 0
-        self.is_consolidation_active = False
-        self.partial_close_executed = False
-        self.consolidation_history = []
+        self.last_signal_type = self.state_manager.get_last_signal_type()
+        self.consecutive_hold_count = self.state_manager.get_consecutive_hold_count()
+        
+        consolidation_state = self.state_manager.get_consolidation_state()
+        self.is_consolidation_active = consolidation_state['is_consolidation_active']
+        self.partial_close_executed = consolidation_state['partial_close_executed']
+        self.consolidation_history = consolidation_state['consolidation_history']
         
     def process_signal_by_strategy(self, signal: str, market_data: Dict[str, Any],
                                  strategy_type: str, signal_data: Dict[str, Any]) -> bool:
@@ -1928,6 +2106,9 @@ class StrategyBehaviorHandler:
         # 保持最近的最大数量
         if len(self.consolidation_signal_history) > self.max_consolidation_signals * 3:
             self.consolidation_signal_history = self.consolidation_signal_history[-self.max_consolidation_signals*2:]
+        
+        # 保存到状态管理器
+        self.state_manager.set_consolidation_signal_history(self.consolidation_signal_history)
     
     def _update_price_history(self, current_price: float):
         """更新价格历史 - 带时间戳"""
@@ -1946,6 +2127,9 @@ class StrategyBehaviorHandler:
         max_history_size = 500
         if len(self.price_history) > max_history_size:
             self.price_history = self.price_history[-max_history_size:]
+        
+        # 保存到状态管理器
+        self.state_manager.set_price_history(self.price_history)
     
     def _get_strategy_config(self, strategy_type: str = None) -> Dict[str, Any]:
         """获取策略配置"""
@@ -2246,6 +2430,10 @@ class StrategyBehaviorHandler:
             # 更新连续信号计数器
             self._update_signal_counter(signal)
             
+            # 更新最后信号类型
+            self.last_signal_type = signal
+            self.state_manager.set_last_signal_type(signal)
+            
             log_info("=" * 60)
             log_info(f"🎯 AI信号执行开始 - 信号类型: {signal}")
             log_info("=" * 60)
@@ -2507,6 +2695,9 @@ class StrategyBehaviorHandler:
             self.consecutive_hold_count += 1
         else:
             self.consecutive_hold_count = 0
+        
+        # 保存到状态管理器
+        self.state_manager.set_consecutive_hold_count(self.consecutive_hold_count)
     
     def _format_position_info(self, position: Optional[Dict[str, Any]]) -> str:
         """格式化持仓信息"""
