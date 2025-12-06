@@ -1298,6 +1298,12 @@ class StrategyBehaviorHandler:
         # 条件3: 检查2小时波动率是否符合策略要求
         volatility_threshold = self._get_volatility_threshold(strategy_type, strategy_config)
         recent_volatility = self._calculate_recent_volatility()
+        
+        # 确保波动率在合理范围内（0-100%）
+        if recent_volatility > 1.0:  # 超过100%视为异常值
+            recent_volatility = 0.05  # 使用5%的默认值
+            log_warning(f"⚠️ 波动率计算异常，使用默认值: {recent_volatility:.2%}")
+        
         condition3_satisfied = recent_volatility <= volatility_threshold
         
         conditions.append({
@@ -1367,7 +1373,7 @@ class StrategyBehaviorHandler:
     def _calculate_recent_volatility(self) -> float:
         """计算最近2小时的价格波动率"""
         if len(self.price_history) < 2:
-            return 999.0  # 数据不足，返回高值避免误判
+            return 0.05  # 数据不足，返回5%的合理默认值
         
         current_time = datetime.now()
         oldest_valid_time = current_time - timedelta(minutes=self.price_history_window)
@@ -1379,14 +1385,14 @@ class StrategyBehaviorHandler:
                 recent_prices.append(price)
         
         if len(recent_prices) < 2:
-            return 999.0
+            return 0.05  # 数据不足，返回5%的合理默认值
         
         # 计算波动率：(最高价-最低价)/最高价
         max_price = max(recent_prices)
         min_price = min(recent_prices)
         
         if max_price <= 0:
-            return 999.0
+            return 0.05  # 价格无效，返回5%的合理默认值
         
         volatility = (max_price - min_price) / max_price
         return volatility
@@ -2339,6 +2345,12 @@ class StrategyBehaviorHandler:
         
         # 条件4: 波动率检查
         recent_volatility = self._calculate_recent_volatility()
+        
+        # 确保波动率在合理范围内（0-100%）
+        if recent_volatility > 1.0:  # 超过100%视为异常值
+            recent_volatility = 0.05  # 使用5%的默认值
+            log_warning(f"⚠️ 波动率计算异常，使用默认值: {recent_volatility:.2%}")
+        
         volatility_threshold = 0.012  # 默认中等策略阈值
         condition4_satisfied = recent_volatility <= volatility_threshold
         
