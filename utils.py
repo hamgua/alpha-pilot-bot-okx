@@ -366,12 +366,37 @@ class SystemMonitor:
     def get_stats(self) -> Dict[str, Any]:
         """获取系统统计"""
         with self._lock:
+            uptime = self.get_uptime()
+            total_api_calls = self._stats.get('api_calls', 0)
+            total_errors = self._stats.get('errors', 0)
+            error_rate = total_errors / max(total_api_calls, 1)
+            
             return {
                 **self._stats,
-                'uptime_seconds': self.get_uptime(),
-                'uptime_formatted': str(timedelta(seconds=int(self.get_uptime()))),
+                'uptime_seconds': uptime,
+                'uptime_formatted': str(timedelta(seconds=int(uptime))),
+                'error_rate': error_rate,
+                'system_health': self._calculate_health_score(),
                 'timestamp': datetime.now().isoformat()
             }
+    
+    def _calculate_health_score(self) -> float:
+        """计算系统健康分数"""
+        if self._stats.get('api_calls', 0) == 0:
+            return 100.0
+        
+        error_rate = self._stats.get('errors', 0) / self._stats.get('api_calls', 1)
+        
+        if error_rate < 0.01:
+            return 100.0
+        elif error_rate < 0.05:
+            return 90.0
+        elif error_rate < 0.1:
+            return 75.0
+        elif error_rate < 0.2:
+            return 50.0
+        else:
+            return 25.0
     
     def reset_stats(self) -> None:
         """重置统计"""
@@ -1327,6 +1352,15 @@ class EnhancedSystemMonitor:
         with self.lock:
             uptime = time.time() - self.metrics['start_time']
             
+            # 计算关键指标
+            requests_per_minute = self.metrics['api_calls'] / max(uptime / 60, 1)
+            trades_per_hour = self.metrics['trades_executed'] / max(uptime / 3600, 1)
+            error_rate = self.metrics['errors_count'] / max(self.metrics['api_calls'], 1)
+            health_score = self._calculate_health_score()
+            
+            # 生成易懂的系统状态描述
+            status_description = self._get_status_description(health_score, error_rate)
+            
             return {
                 'uptime': self._format_uptime(uptime),
                 'uptime_seconds': uptime,
@@ -1334,12 +1368,26 @@ class EnhancedSystemMonitor:
                 'trades_executed': self.metrics['trades_executed'],
                 'errors_count': self.metrics['errors_count'],
                 'warnings_count': self.metrics['warnings_count'],
-                'requests_per_minute': self.metrics['api_calls'] / max(uptime / 60, 1),
-                'trades_per_hour': self.metrics['trades_executed'] / max(uptime / 3600, 1),
-                'error_rate': self.metrics['errors_count'] / max(self.metrics['api_calls'], 1),
-                'system_health': self._calculate_health_score(),
+                'requests_per_minute': requests_per_minute,
+                'trades_per_hour': trades_per_hour,
+                'error_rate': error_rate,
+                'system_health': health_score,
+                'status_description': status_description,
                 'timestamp': datetime.now().isoformat()
             }
+    
+    def _get_status_description(self, health_score: float, error_rate: float) -> str:
+        """获取系统状态描述"""
+        if health_score >= 90:
+            return "🟢 系统运行极佳 - 所有功能正常"
+        elif health_score >= 75:
+            return "🟢 系统运行良好 - 偶有小问题"
+        elif health_score >= 50:
+            return "🟡 系统运行一般 - 需要关注"
+        elif health_score >= 25:
+            return "🟠 系统运行较差 - 需要维护"
+        else:
+            return "🔴 系统运行异常 - 需要立即处理"
     
     def _format_uptime(self, seconds: float) -> str:
         """格式化运行时间"""

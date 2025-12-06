@@ -1461,20 +1461,37 @@ class AlphaArenaBot:
         if len(self.state.price_history) > 1000:
             self.state.price_history = self.state.price_history[-500:]
         
-        # 内存管理
+        # 内存管理 - 每10轮清理一次，显示易懂的统计信息
         if self.state.current_cycle % 10 == 0:  # 每10轮清理一次
             memory_stats = memory_manager.get_memory_stats()
-            log_info(f"📊 内存统计: {memory_stats}")
+            log_info("📊 【系统内存状态】")
+            log_info(f"   💾 内存使用: {memory_stats['total_items']} 条记录")
+            log_info(f"   🔑 数据类型: {memory_stats['keys_count']} 种")
+            log_info(f"   📏 单类上限: {memory_stats['max_per_key']} 条")
+            log_info(f"   💻 内存占用: {memory_stats['memory_usage_mb']:.2f} MB")
+            log_info(f"   🟢 健康状态: {memory_stats['status']}")
         
-        # 缓存管理
+        # 缓存管理 - 每20轮检查一次，显示易懂的统计信息
         if self.state.current_cycle % 20 == 0:  # 每20轮检查一次
             cache_stats = cache_manager.get_stats()
-            log_info(f"📊 缓存统计: {cache_stats}")
+            log_info("📊 【系统缓存状态】")
+            log_info(f"   📦 缓存数量: {cache_stats['size']} 条")
+            log_info(f"   🎯 缓存上限: {cache_stats['max_size']} 条")
+            log_info(f"   📈 使用率: {(cache_stats['size'] / cache_stats['max_size'] * 100):.1f}%")
         
-        # 系统监控
+        # 系统监控 - 每5轮更新一次，显示易懂的统计信息
         if self.state.current_cycle % 5 == 0:  # 每5轮更新一次
             system_stats = system_monitor.get_stats()
-            log_info(f"📊 系统统计: {system_stats}")
+            log_info("📊 【系统运行状态】")
+            log_info(f"   ⏱️ 运行时间: {system_stats['uptime_formatted']}")
+            log_info(f"   📈 交易次数: {system_stats['trades']} 次")
+            log_info(f"   🔍 API调用: {system_stats['api_calls']} 次")
+            log_info(f"   ⚠️ 警告次数: {system_stats['warnings']} 次")
+            log_info(f"   ❌ 错误次数: {system_stats['errors']} 次")
+            log_info(f"   📊 错误率: {system_stats['error_rate']*100:.2f}%")
+            log_info(f"   💯 健康分数: {system_stats['system_health']:.1f}/100")
+            if 'status_description' in system_stats:
+                log_info(f"   📋 状态描述: {system_stats['status_description']}")
         
         # 数据管理 - 保存性能指标
         if self.state.current_cycle % 10 == 0:  # 每10轮保存一次
