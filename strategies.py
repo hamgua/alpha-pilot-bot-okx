@@ -1002,113 +1002,195 @@ class StrategyBehaviorHandler:
     
     def _execute_conservative_logic(self, signal: str, market_data: Dict[str, Any],
                                   strategy_config: Dict[str, Any], signal_data: Dict[str, Any]) -> bool:
-        """执行稳健型策略逻辑 - 智能趋势感知版本"""
+        """执行稳健型策略逻辑 - 智能趋势感知版本，带详细条件显示"""
         
         position = market_data.get('position')
         current_price = market_data.get('price', 0)
         
+        log_info(f"🔍 开始稳健型策略逻辑检查 - 信号: {signal}")
+        
         if signal == 'BUY':
             # BUY逻辑：文档第58-61行 + 智能趋势感知
-            if not position or position.get('size', 0) == 0:
+            log_info("📈 检查BUY信号条件:")
+            
+            # 条件1: 检查是否有持仓
+            has_position = position and position.get('size', 0) > 0
+            condition1_satisfied = not has_position
+            
+            log_info(f"{'✅' if condition1_satisfied else '❌'} 条件1: 无持仓检查")
+            log_info(f"   当前持仓: {'有持仓' if has_position else '无持仓'}")
+            log_info(f"   持仓大小: {position.get('size', 0) if has_position else 0} BTC")
+            
+            if condition1_satisfied:
                 # 无持仓且BUY → 开多（20-40%仓位）
-                log_info("📈 稳健型：无持仓，执行开仓")
+                log_info("✅ 所有BUY条件满足，执行开仓")
                 position_ratio = strategy_config.get('max_position_ratio', 0.4)  # 使用配置的最大仓位比例
                 log_info(f"   开仓仓位比例: {position_ratio:.1%}")
                 return self._open_position('BUY', market_data, position_ratio, strategy_config)
             else:
                 # 有持仓且BUY → 不补仓，智能更新止盈止损
-                log_info("📈 稳健型：有持仓，智能更新止盈止损")
+                log_info("📈 有持仓，检查智能更新止盈止损条件:")
+                
                 trend_direction = self._determine_trend_direction(signal_data, current_price)
-                log_info(f"   趋势方向: {trend_direction}")
+                log_info(f"{'✅' if trend_direction != 'neutral' else '❌'} 趋势方向: {trend_direction}")
+                
+                log_info("✅ 执行智能更新止盈止损")
                 return self._update_tp_sl_only(position, current_price, strategy_config, trend_direction)
                 
         elif signal == 'SELL':
             # SELL逻辑：文档第64-68行
-            # 不开空，有多仓→立即平仓并取消委托，无多仓→不操作
-            if position and position.get('size', 0) > 0 and position.get('side') == 'long':
-                log_info("📉 稳健型：有多仓，执行平仓并取消委托")
-                log_info(f"   持仓大小: {position.get('size', 0)} BTC")
+            log_info("📉 检查SELL信号条件:")
+            
+            # 条件1: 检查是否有多仓
+            has_long_position = position and position.get('size', 0) > 0 and position.get('side') == 'long'
+            
+            log_info(f"{'✅' if has_long_position else '❌'} 条件1: 多仓检查")
+            log_info(f"   持仓状态: {'有多仓' if has_long_position else '无多仓'}")
+            log_info(f"   持仓方向: {position.get('side', '无') if position else '无'}")
+            log_info(f"   持仓大小: {position.get('size', 0) if position else 0} BTC")
+            
+            if has_long_position:
+                log_info("✅ 所有SELL条件满足，执行平仓并取消委托")
                 return self._close_position_and_cancel_orders(position, market_data, '稳健型平仓')
             else:
-                log_info("📊 稳健型：无多仓，不操作")
+                log_info("📊 无多仓，不操作")
                 return True
         
         return False
     
     def _execute_moderate_logic(self, signal: str, market_data: Dict[str, Any],
                               strategy_config: Dict[str, Any], signal_data: Dict[str, Any]) -> bool:
-        """执行中等型策略逻辑 - 智能趋势感知版本"""
+        """执行中等型策略逻辑 - 智能趋势感知版本，带详细条件显示"""
         
         position = market_data.get('position')
         current_price = market_data.get('price', 0)
         
+        log_info(f"🔍 开始中等型策略逻辑检查 - 信号: {signal}")
+        
         if signal == 'BUY':
             # BUY逻辑：文档第106-109行 + 智能趋势感知
-            if not position or position.get('size', 0) == 0:
+            log_info("📈 检查BUY信号条件:")
+            
+            # 条件1: 检查是否有持仓
+            has_position = position and position.get('size', 0) > 0
+            condition1_satisfied = not has_position
+            
+            log_info(f"{'✅' if condition1_satisfied else '❌'} 条件1: 无持仓检查")
+            log_info(f"   当前持仓: {'有持仓' if has_position else '无持仓'}")
+            log_info(f"   持仓大小: {position.get('size', 0) if has_position else 0} BTC")
+            
+            if condition1_satisfied:
                 # 无仓 → 建多（50-60%仓位）
-                log_info("📈 中等型：无持仓，执行开仓（50-60%仓位）")
+                log_info("✅ 所有BUY条件满足，执行开仓（50-60%仓位）")
                 position_ratio = min(strategy_config.get('max_position_ratio', 0.6), 0.6)  # 限制在60%
                 log_info(f"   开仓仓位比例: {position_ratio:.1%}")
                 return self._open_position('BUY', market_data, position_ratio, strategy_config)
             else:
                 # 有仓 → 若趋势增强可补10-20%，同时智能更新止盈止损
-                if self._is_trend_strengthening(signal_data):
-                    log_info("📈 中等型：趋势增强，执行加仓10-20%")
+                log_info("📈 有持仓，检查加仓条件:")
+                
+                trend_strengthening = self._is_trend_strengthening(signal_data)
+                log_info(f"{'✅' if trend_strengthening else '❌'} 条件2: 趋势增强检查")
+                log_info(f"   信号置信度: {signal_data.get('confidence', 0):.2f}")
+                log_info(f"   趋势强度: {signal_data.get('trend_strength', 0):.2f}")
+                log_info(f"   趋势状态: {'增强' if trend_strengthening else '未增强'}")
+                
+                if trend_strengthening:
+                    log_info("✅ 趋势增强，执行加仓10-20%")
                     add_ratio = min(0.2, strategy_config.get('max_position_ratio', 0.6) - self._get_current_position_ratio(position))
                     log_info(f"   加仓比例: {add_ratio:.1%}")
                     return self._add_position('BUY', market_data, add_ratio, strategy_config)
                 else:
-                    log_info("📈 中等型：趋势未增强，智能更新止盈止损")
+                    log_info("✅ 趋势未增强，智能更新止盈止损")
                     trend_direction = self._determine_trend_direction(signal_data, current_price)
                     log_info(f"   趋势方向: {trend_direction}")
                     return self._update_tp_sl_only(position, current_price, strategy_config, trend_direction)
                 
         elif signal == 'SELL':
             # SELL逻辑：文档第112-115行
-            # 不开空，有多→全平，无多→不操作
-            if position and position.get('size', 0) > 0 and position.get('side') == 'long':
-                log_info("📉 中等型：有多仓，执行全平")
+            log_info("📉 检查SELL信号条件:")
+            
+            # 条件1: 检查是否有多仓
+            has_long_position = position and position.get('size', 0) > 0 and position.get('side') == 'long'
+            
+            log_info(f"{'✅' if has_long_position else '❌'} 条件1: 多仓检查")
+            log_info(f"   持仓状态: {'有多仓' if has_long_position else '无多仓'}")
+            log_info(f"   持仓方向: {position.get('side', '无') if position else '无'}")
+            log_info(f"   持仓大小: {position.get('size', 0) if position else 0} BTC")
+            
+            if has_long_position:
+                log_info("✅ 所有SELL条件满足，执行全平")
                 return self._close_position_and_cancel_orders(position, market_data, '中等型平仓')
             else:
-                log_info("📊 中等型：无多仓，不操作")
+                log_info("📊 无多仓，不操作")
                 return True
         
         return False
     
     def _execute_aggressive_logic(self, signal: str, market_data: Dict[str, Any],
                                 strategy_config: Dict[str, Any], signal_data: Dict[str, Any]) -> bool:
-        """执行激进型策略逻辑 - 完全符合设计文档"""
+        """执行激进型策略逻辑 - 完全符合设计文档，带详细条件显示"""
         
         position = market_data.get('position')
         current_price = market_data.get('price', 0)
         
+        log_info(f"🔍 开始激进型策略逻辑检查 - 信号: {signal}")
+        
         if signal == 'BUY':
             # BUY逻辑：文档第153-157行
-            if not position or position.get('size', 0) == 0:
+            log_info("📈 检查BUY信号条件:")
+            
+            # 条件1: 检查是否有持仓
+            has_position = position and position.get('size', 0) > 0
+            condition1_satisfied = not has_position
+            
+            log_info(f"{'✅' if condition1_satisfied else '❌'} 条件1: 无持仓检查")
+            log_info(f"   当前持仓: {'有持仓' if has_position else '无持仓'}")
+            log_info(f"   持仓大小: {position.get('size', 0) if has_position else 0} BTC")
+            
+            if condition1_satisfied:
                 # 无仓 → 建多（60-80%）
-                log_info("📈 激进型：无持仓，执行开仓（60-80%仓位）")
+                log_info("✅ 所有BUY条件满足，执行开仓（60-80%仓位）")
                 position_ratio = min(strategy_config.get('max_position_ratio', 0.8), 0.8)  # 限制在80%
                 log_info(f"   开仓仓位比例: {position_ratio:.1%}")
                 return self._open_position('BUY', market_data, position_ratio, strategy_config, use_trailing_stop=True)
             else:
                 # 有仓 → 趋势越强越加仓，使用移动止盈
-                if self._is_strong_trend(signal_data):
-                    log_info("📈 激进型：强趋势，执行加仓")
+                log_info("📈 有持仓，检查加仓条件:")
+                
+                strong_trend = self._is_strong_trend(signal_data)
+                log_info(f"{'✅' if strong_trend else '❌'} 条件2: 强趋势检查")
+                log_info(f"   信号置信度: {signal_data.get('confidence', 0):.2f}")
+                log_info(f"   趋势强度: {signal_data.get('trend_strength', 0):.2f}")
+                log_info(f"   市场波动率: {signal_data.get('volatility', 0):.2f}%")
+                log_info(f"   趋势状态: {'强趋势' if strong_trend else '非强趋势'}")
+                
+                if strong_trend:
+                    log_info("✅ 强趋势，执行加仓")
                     add_ratio = min(0.3, strategy_config.get('max_position_ratio', 0.8) - self._get_current_position_ratio(position))
                     log_info(f"   加仓比例: {add_ratio:.1%}")
                     return self._add_position('BUY', market_data, add_ratio, strategy_config, use_trailing_stop=True)
                 else:
-                    log_info("📈 激进型：更新移动止盈")
+                    log_info("✅ 更新移动止盈")
                     return self._update_trailing_stop(position, current_price, strategy_config)
                 
         elif signal == 'SELL':
             # SELL逻辑：文档第160-163行
-            # 不开空，有多仓 → 立即平仓
-            if position and position.get('size', 0) > 0 and position.get('side') == 'long':
-                log_info("📉 激进型：有多仓，立即平仓")
+            log_info("📉 检查SELL信号条件:")
+            
+            # 条件1: 检查是否有多仓
+            has_long_position = position and position.get('size', 0) > 0 and position.get('side') == 'long'
+            
+            log_info(f"{'✅' if has_long_position else '❌'} 条件1: 多仓检查")
+            log_info(f"   持仓状态: {'有多仓' if has_long_position else '无多仓'}")
+            log_info(f"   持仓方向: {position.get('side', '无') if position else '无'}")
+            log_info(f"   持仓大小: {position.get('size', 0) if position else 0} BTC")
+            
+            if has_long_position:
+                log_info("✅ 所有SELL条件满足，立即平仓")
                 return self._close_position_and_cancel_orders(position, market_data, '激进型平仓')
             else:
-                log_info("📊 激进型：无多仓，不操作")
+                log_info("📊 无多仓，不操作")
                 return True
         
         return False
@@ -1172,14 +1254,27 @@ class StrategyBehaviorHandler:
         return False
     
     def _is_consolidation_triggered(self, strategy_type: str, strategy_config: Dict[str, Any]) -> bool:
-        """检查是否触发横盘条件 - 完全符合设计文档要求"""
+        """检查是否触发横盘条件 - 完全符合设计文档要求，带详细条件显示"""
         
-        # 检查连续HOLD信号
-        if len(self.consolidation_signal_history) < self.max_consolidation_signals:
-            log_info(f"📊 横盘检测: 信号历史不足 ({len(self.consolidation_signal_history)} < {self.max_consolidation_signals})")
+        log_info("🔍 开始横盘条件检测...")
+        
+        # 定义5个检测条件
+        conditions = []
+        
+        # 条件1: 检查信号历史是否充足
+        condition1_satisfied = len(self.consolidation_signal_history) >= self.max_consolidation_signals
+        conditions.append({
+            'name': '信号历史充足',
+            'satisfied': condition1_satisfied,
+            'details': f"历史信号: {len(self.consolidation_signal_history)}/{self.max_consolidation_signals}"
+        })
+        
+        if not condition1_satisfied:
+            log_info(f"❌ 条件1不满足: 信号历史不足 ({len(self.consolidation_signal_history)} < {self.max_consolidation_signals})")
+            self._log_consolidation_conditions(conditions, 0, 1)
             return False
         
-        # 检查最近4次信号是否都是HOLD，并且在2小时时间窗口内
+        # 条件2: 检查最近4次信号是否都是HOLD，并且在2小时时间窗口内
         current_time = datetime.now()
         recent_hold_signals = 0
         oldest_valid_time = current_time - timedelta(minutes=self.consolidation_time_window)
@@ -1193,17 +1288,70 @@ class StrategyBehaviorHandler:
             else:
                 break  # 遇到非HOLD信号，重置计数
         
-        if recent_hold_signals < self.max_consolidation_signals:
-            log_info(f"📊 横盘检测: 连续HOLD信号不足 ({recent_hold_signals} < {self.max_consolidation_signals})")
-            return False
+        condition2_satisfied = recent_hold_signals >= self.max_consolidation_signals
+        conditions.append({
+            'name': '连续HOLD信号',
+            'satisfied': condition2_satisfied,
+            'details': f"连续HOLD: {recent_hold_signals}/{self.max_consolidation_signals} (时间窗口内)"
+        })
         
-        # 检查2小时波动率是否符合策略要求
+        # 条件3: 检查2小时波动率是否符合策略要求
         volatility_threshold = self._get_volatility_threshold(strategy_type, strategy_config)
         recent_volatility = self._calculate_recent_volatility()
+        condition3_satisfied = recent_volatility <= volatility_threshold
         
-        log_info(f"📊 横盘检测: 策略={strategy_type}, 波动率={recent_volatility:.2%}, 阈值={volatility_threshold:.2%}")
+        conditions.append({
+            'name': '波动率阈值',
+            'satisfied': condition3_satisfied,
+            'details': f"当前波动率: {recent_volatility:.2%}, 阈值: {volatility_threshold:.2%}"
+        })
         
-        return recent_volatility <= volatility_threshold
+        # 条件4: 检查是否有持仓
+        position = self.trading_engine.get_position() if hasattr(self.trading_engine, 'get_position') else None
+        has_position = position and position.get('size', 0) > 0
+        condition4_satisfied = has_position
+        
+        conditions.append({
+            'name': '有持仓',
+            'satisfied': condition4_satisfied,
+            'details': f"持仓状态: {'有持仓' if has_position else '无持仓'}"
+        })
+        
+        # 条件5: 检查是否允许做空（如果不允许做空才触发横盘处理）
+        allow_short = config.get('trading', 'allow_short_selling', False)
+        condition5_satisfied = not allow_short
+        
+        conditions.append({
+            'name': '禁止做空',
+            'satisfied': condition5_satisfied,
+            'details': f"做空设置: {'禁止' if not allow_short else '允许'}"
+        })
+        
+        # 计算满足的条件数量
+        satisfied_count = sum(1 for condition in conditions if condition['satisfied'])
+        total_conditions = len(conditions)
+        
+        # 记录详细的条件检查结果
+        self._log_consolidation_conditions(conditions, satisfied_count, total_conditions)
+        
+        # 返回最终判断结果（需要满足至少3个条件）
+        final_result = satisfied_count >= 3
+        log_info(f"🎯 横盘检测结论: {'触发横盘处理' if final_result else '未触发横盘处理'} ({satisfied_count}/{total_conditions} 条件满足)")
+        
+        return final_result
+    
+    def _log_consolidation_conditions(self, conditions: List[Dict], satisfied_count: int, total_count: int):
+        """记录横盘条件检查结果的详细日志"""
+        log_info("📊 横盘条件检查结果:")
+        log_info("-" * 40)
+        
+        for i, condition in enumerate(conditions, 1):
+            status_icon = "✅" if condition['satisfied'] else "❌"
+            log_info(f"{status_icon} 条件{i}: {condition['name']}")
+            log_info(f"   {condition['details']}")
+        
+        log_info("-" * 40)
+        log_info(f"📈 总计: {satisfied_count}/{total_count} 条件满足")
     
     def _get_volatility_threshold(self, strategy_type: str, strategy_config: Dict[str, Any]) -> float:
         """获取策略对应的波动率阈值 - 基于市场分析优化"""
@@ -2083,7 +2231,7 @@ class StrategyBehaviorHandler:
                 }
     
     def process_signal(self, signal_data: Dict[str, Any], market_data: Dict[str, Any]) -> bool:
-        """处理AI融合信号 - 使用新的策略行为处理器"""
+        """处理AI融合信号 - 使用新的策略行为处理器，带详细条件显示"""
         try:
             signal = signal_data.get('signal', 'HOLD').upper()
             position = market_data.get('position')
@@ -2092,32 +2240,242 @@ class StrategyBehaviorHandler:
             # 更新连续信号计数器
             self._update_signal_counter(signal)
             
-            log_info(f"🎯 开始执行AI信号: {signal}")
-            log_info(f"   做空开关: {'开启' if allow_short else '关闭'}")
+            log_info("=" * 60)
+            log_info(f"🎯 AI信号执行开始 - 信号类型: {signal}")
+            log_info("=" * 60)
+            
+            # 显示基础信号信息
+            log_info("📊 信号基础信息:")
+            log_info(f"   信号类型: {signal}")
+            log_info(f"   做空开关: {'✅ 开启' if allow_short else '❌ 关闭'}")
             log_info(f"   当前持仓: {self._format_position_info(position)}")
             log_info(f"   连续HOLD信号: {self.consecutive_hold_count}次")
+            
+            # 显示信号数据详情
+            log_info("📈 信号数据详情:")
+            log_info(f"   信号置信度: {signal_data.get('confidence', 0):.3f}")
+            log_info(f"   趋势强度: {signal_data.get('trend_strength', 0):.3f}")
+            log_info(f"   市场波动率: {signal_data.get('volatility', 0):.2f}%")
+            log_info(f"   信号来源: {signal_data.get('source', '未知')}")
+            
+            # 显示市场数据详情
+            current_price = market_data.get('price', 0)
+            balance = market_data.get('balance', {}).get('free', 0)
+            log_info("💰 市场数据详情:")
+            log_info(f"   当前价格: ${current_price:,.2f}")
+            log_info(f"   可用余额: ${balance:,.2f}")
+            log_info(f"   持仓方向: {position.get('side', '无') if position else '无'}")
+            log_info(f"   持仓数量: {position.get('size', 0) if position else 0} BTC")
             
             # 获取当前策略类型
             from strategies import StrategySelector
             selector = StrategySelector()
             strategy_type = selector.investment_type
             
-            log_info(f"   当前策略: {strategy_type}")
+            log_info(f"🎯 策略配置: {strategy_type}")
+            
+            # 根据信号类型显示不同的条件检查
+            if signal == 'HOLD':
+                log_info("⏸️ HOLD信号条件检查:")
+                self._log_hold_signal_conditions(signal_data, market_data)
+            elif signal == 'BUY':
+                log_info("📈 BUY信号条件检查:")
+                self._log_buy_signal_conditions(signal_data, market_data)
+            elif signal == 'SELL':
+                log_info("📉 SELL信号条件检查:")
+                self._log_sell_signal_conditions(signal_data, market_data)
             
             # 使用新的策略行为处理器
+            log_info("🚀 开始执行策略逻辑...")
             result = self.process_signal_by_strategy(
                 signal, market_data, strategy_type, signal_data
             )
             
+            # 记录执行结果
+            log_info("📊 信号执行结果:")
+            log_info(f"   执行状态: {'✅ 成功' if result else '❌ 失败'}")
+            log_info(f"   信号类型: {signal}")
+            log_info(f"   策略类型: {strategy_type}")
+            
             # 记录信号历史
             self.last_signal_type = signal
+            
+            log_info("=" * 60)
+            log_info("🎯 AI信号执行完成")
+            log_info("=" * 60)
+            
             return result
                 
         except Exception as e:
-            log_error(f"执行AI信号失败: {e}")
+            log_error(f"❌ 执行AI信号失败: {e}")
             # 回退到原有的执行逻辑
             log_warning("⚠️ 回退到原有执行逻辑")
             return self._fallback_signal_execution(signal, position, signal_data, market_data, allow_short)
+    
+    def _log_hold_signal_conditions(self, signal_data: Dict[str, Any], market_data: Dict[str, Any]):
+        """记录HOLD信号的条件检查"""
+        position = market_data.get('position')
+        
+        # 条件1: 连续HOLD信号检查
+        consecutive_hold = self.consecutive_hold_count
+        condition1_satisfied = consecutive_hold >= 4
+        
+        log_info(f"{'✅' if condition1_satisfied else '❌'} 条件1: 连续HOLD信号")
+        log_info(f"   连续HOLD次数: {consecutive_hold}/4")
+        
+        # 条件2: 持仓检查
+        has_position = position and position.get('size', 0) > 0
+        condition2_satisfied = has_position
+        
+        log_info(f"{'✅' if condition2_satisfied else '❌'} 条件2: 持仓状态")
+        log_info(f"   持仓状态: {'有持仓' if has_position else '无持仓'}")
+        
+        # 条件3: 做空设置检查
+        allow_short = config.get('trading', 'allow_short_selling', False)
+        condition3_satisfied = not allow_short
+        
+        log_info(f"{'✅' if condition3_satisfied else '❌'} 条件3: 做空设置")
+        log_info(f"   做空开关: {'关闭' if not allow_short else '开启'}")
+        
+        # 条件4: 波动率检查
+        recent_volatility = self._calculate_recent_volatility()
+        volatility_threshold = 0.012  # 默认中等策略阈值
+        condition4_satisfied = recent_volatility <= volatility_threshold
+        
+        log_info(f"{'✅' if condition4_satisfied else '❌'} 条件4: 波动率阈值")
+        log_info(f"   当前波动率: {recent_volatility:.2%}")
+        log_info(f"   波动率阈值: {volatility_threshold:.2%}")
+        
+        # 条件5: 信号置信度检查
+        signal_confidence = signal_data.get('confidence', 0)
+        condition5_satisfied = signal_confidence < 0.6  # 低置信度倾向于HOLD
+        
+        log_info(f"{'✅' if condition5_satisfied else '❌'} 条件5: 信号置信度")
+        log_info(f"   信号置信度: {signal_confidence:.3f}")
+        log_info(f"   置信度阈值: < 0.6")
+        
+        # 统计满足的条件
+        conditions = [condition1_satisfied, condition2_satisfied, condition3_satisfied, condition4_satisfied, condition5_satisfied]
+        # 确保所有条件都是布尔值
+        conditions = [bool(cond) for cond in conditions]
+        satisfied_count = sum(conditions)
+        total_count = len(conditions)
+        
+        log_info(f"📊 HOLD信号条件统计: {satisfied_count}/{total_count} 条件满足")
+    
+    def _log_buy_signal_conditions(self, signal_data: Dict[str, Any], market_data: Dict[str, Any]):
+        """记录BUY信号的条件检查"""
+        position = market_data.get('position')
+        
+        # 条件1: 持仓检查
+        has_position = position and position.get('size', 0) > 0
+        condition1_satisfied = not has_position
+        
+        log_info(f"{'✅' if condition1_satisfied else '❌'} 条件1: 无持仓")
+        log_info(f"   当前持仓: {'有持仓' if has_position else '无持仓'}")
+        
+        # 条件2: 信号置信度检查
+        signal_confidence = signal_data.get('confidence', 0)
+        condition2_satisfied = signal_confidence > 0.6
+        
+        log_info(f"{'✅' if condition2_satisfied else '❌'} 条件2: 信号置信度")
+        log_info(f"   信号置信度: {signal_confidence:.3f}")
+        log_info(f"   置信度阈值: > 0.6")
+        
+        # 条件3: 趋势强度检查
+        trend_strength = signal_data.get('trend_strength', 0)
+        condition3_satisfied = trend_strength > 0.5
+        
+        log_info(f"{'✅' if condition3_satisfied else '❌'} 条件3: 趋势强度")
+        log_info(f"   趋势强度: {trend_strength:.3f}")
+        log_info(f"   强度阈值: > 0.5")
+        
+        # 条件4: 市场波动率检查
+        market_volatility = signal_data.get('volatility', 0)
+        condition4_satisfied = market_volatility < 5.0  # 波动率不能太高
+        
+        log_info(f"{'✅' if condition4_satisfied else '❌'} 条件4: 市场波动率")
+        log_info(f"   市场波动率: {market_volatility:.2f}%")
+        log_info(f"   波动率阈值: < 5.0%")
+        
+        # 条件5: 余额检查
+        balance = market_data.get('balance', {}).get('free', 0)
+        current_price = market_data.get('price', 0)
+        min_required_balance = current_price * 0.001  # 最小交易数量 * 价格
+        condition5_satisfied = balance >= min_required_balance
+        
+        log_info(f"{'✅' if condition5_satisfied else '❌'} 条件5: 资金充足")
+        log_info(f"   可用余额: ${balance:,.2f}")
+        log_info(f"   最小需求: ${min_required_balance:,.2f}")
+        
+        # 统计满足的条件
+        conditions = [condition1_satisfied, condition2_satisfied, condition3_satisfied, condition4_satisfied, condition5_satisfied]
+        # 确保所有条件都是布尔值
+        conditions = [bool(cond) for cond in conditions]
+        satisfied_count = sum(conditions)
+        total_count = len(conditions)
+        
+        log_info(f"📊 BUY信号条件统计: {satisfied_count}/{total_count} 条件满足")
+    
+    def _log_sell_signal_conditions(self, signal_data: Dict[str, Any], market_data: Dict[str, Any]):
+        """记录SELL信号的条件检查"""
+        position = market_data.get('position')
+        
+        # 条件1: 多仓检查
+        has_long_position = position and position.get('size', 0) > 0 and position.get('side') == 'long'
+        condition1_satisfied = has_long_position
+        
+        log_info(f"{'✅' if condition1_satisfied else '❌'} 条件1: 持有多仓")
+        log_info(f"   持仓状态: {'有多仓' if has_long_position else '无多仓'}")
+        log_info(f"   持仓方向: {position.get('side', '无') if position else '无'}")
+        log_info(f"   持仓数量: {position.get('size', 0) if position else 0} BTC")
+        
+        # 条件2: 信号置信度检查
+        signal_confidence = signal_data.get('confidence', 0)
+        condition2_satisfied = signal_confidence > 0.6
+        
+        log_info(f"{'✅' if condition2_satisfied else '❌'} 条件2: 信号置信度")
+        log_info(f"   信号置信度: {signal_confidence:.3f}")
+        log_info(f"   置信度阈值: > 0.6")
+        
+        # 条件3: 趋势强度检查
+        trend_strength = signal_data.get('trend_strength', 0)
+        condition3_satisfied = trend_strength < -0.3  # 负趋势强度表示下跌趋势
+        
+        log_info(f"{'✅' if condition3_satisfied else '❌'} 条件3: 下跌趋势")
+        log_info(f"   趋势强度: {trend_strength:.3f}")
+        log_info(f"   下跌阈值: < -0.3")
+        
+        # 条件4: 盈利检查（可选）
+        if has_long_position:
+            current_price = market_data.get('price', 0)
+            entry_price = position.get('avg_price', current_price)
+            unrealized_pnl = (current_price - entry_price) / entry_price if entry_price > 0 else 0
+            condition4_satisfied = unrealized_pnl > -0.02  # 亏损不超过2%才考虑平仓
+        else:
+            condition4_satisfied = True  # 无持仓时此条件自动满足
+        
+        log_info(f"{'✅' if condition4_satisfied else '❌'} 条件4: 亏损控制")
+        if has_long_position:
+            log_info(f"   未实现盈亏: {unrealized_pnl:.2%}")
+            log_info(f"   亏损阈值: > -2%")
+        
+        # 条件5: 市场状态检查
+        market_volatility = signal_data.get('volatility', 0)
+        condition5_satisfied = market_volatility < 8.0  # 高波动时谨慎平仓
+        
+        log_info(f"{'✅' if condition5_satisfied else '❌'} 条件5: 市场波动率")
+        log_info(f"   市场波动率: {market_volatility:.2f}%")
+        log_info(f"   波动率阈值: < 8.0%")
+        
+        # 统计满足的条件
+        conditions = [condition1_satisfied, condition2_satisfied, condition3_satisfied, condition4_satisfied, condition5_satisfied]
+        # 确保所有条件都是布尔值
+        conditions = [bool(cond) for cond in conditions]
+        satisfied_count = sum(conditions)
+        total_count = len(conditions)
+        
+        log_info(f"📊 SELL信号条件统计: {satisfied_count}/{total_count} 条件满足")
     
     def _fallback_signal_execution(self, signal: str, position: Optional[Dict[str, Any]],
                                  signal_data: Dict[str, Any], market_data: Dict[str, Any], allow_short: bool) -> bool:
