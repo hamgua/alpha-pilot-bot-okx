@@ -83,8 +83,17 @@ class AlphaArenaBot:
         log_info("   • 数据管理系统")
         log_info("=" * 60)
         
-        # 显示配置信息
-        log_info(f"🔄 交易模式: {'模拟交易' if config.get('trading', 'test_mode') else '实盘交易'}")
+        # 显示配置信息 - 增强测试模式显示
+        test_mode = config.get('trading', 'test_mode')
+        if test_mode:
+            log_info("⚠️  ⚠️  ⚠️  当前运行在测试模式 ⚠️  ⚠️  ⚠️")
+            log_info("🔄 交易模式: 🔴 模拟交易 (TEST_MODE=true)")
+            log_info("💡 提示: 所有交易都是模拟的，不会使用真实资金")
+        else:
+            log_info("🚨 🚨 🚨 当前运行在实盘模式 🚨 🚨 🚨")
+            log_info("🔄 交易模式: 💰 实盘交易 (TEST_MODE=false)")
+            log_info("⚠️ 警告: 所有交易都将使用真实资金，请谨慎操作！")
+        
         log_info(f"📈 交易对: {config.get('exchange', 'symbol')}")
         log_info(f"⏰ 时间框架: {config.get('exchange', 'timeframe')}")
         log_info(f"🔧 杠杆倍数: {config.get('trading', 'leverage')}x")
@@ -679,6 +688,15 @@ class AlphaArenaBot:
             log_info(f"{'='*60}")
             log_info(f"🔄 第 {self.state.current_cycle} 轮交易周期开始")
             log_info(f"⏰ 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # 每10轮显示一次当前模式，确保用户知道当前状态
+            if self.state.current_cycle % 10 == 1:  # 第1、11、21...轮显示
+                test_mode = config.get('trading', 'test_mode')
+                if test_mode:
+                    log_info("🔧 当前模式: 🔴 模拟交易模式")
+                else:
+                    log_info("🔧 当前模式: 💰 实盘交易模式")
+            
             log_info(f"{'='*60}")
             
             # 1. 获取市场数据
@@ -1526,7 +1544,16 @@ class AlphaArenaBot:
         启动交易机器人的主循环，处理交易周期和异常恢复
         """
         try:
-            log_info("🚀 Alpha Pilot Bot OKX 交易机器人启动成功！")
+            # 在启动时明确显示当前模式
+            test_mode = config.get('trading', 'test_mode')
+            if test_mode:
+                log_info("🚀 Alpha Pilot Bot OKX 交易机器人启动成功！")
+                log_info("🔧 当前模式: 🔴 模拟交易模式 - 所有交易都是虚拟的")
+            else:
+                log_info("🚀 Alpha Pilot Bot OKX 交易机器人启动成功！")
+                log_info("🔧 当前模式: 💰 实盘交易模式 - 所有交易都是真实的")
+                log_warning("⚠️ 警告: 您正在使用真实资金进行交易，请确保了解相关风险！")
+            
             self.state.is_running = True
             
             while self.state.is_running:
