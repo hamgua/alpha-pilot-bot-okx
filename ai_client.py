@@ -74,7 +74,7 @@ class AIClient:
             self.providers = {}
         
     async def get_signal_from_provider(self, provider: str, market_data: Dict[str, Any]) -> Optional[AISignal]:
-        """从指定AI提供商获取信号"""
+        """从指定AI提供商获取信号（优化版）"""
         try:
             if provider not in self.providers:
                 log_error(f"不支持的AI提供商: {provider}")
@@ -190,7 +190,7 @@ class AIClient:
                     url,
                     headers=headers,
                     json=payload,
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    timeout=aiohttp.ClientTimeout(total=10)  # 从30秒优化到10秒
                 ) as response:
                     if response.status == 200:
                         try:
@@ -650,9 +650,10 @@ MACD: {macd}
             log_warning("没有可用的AI提供商")
             return []
             
-        # 设置超时和重试机制
-        timeout = 25.0
-        max_retries = 2
+        # 设置超时和重试机制（优化版）
+        timeout = 10.0  # 从25秒优化到10秒
+        max_retries = 1  # 从2次重试优化到1次重试
+        retry_delay = 5  # 重试间隔5秒
         
         signals = []
         failed_providers = []
@@ -676,19 +677,21 @@ MACD: {macd}
                         break
                     else:
                         if attempt < max_retries:
-                            log_warning(f"{provider}第{attempt + 1}次尝试失败，重试中...")
-                            await asyncio.sleep(1)
+                            log_warning(f"{provider}第{attempt + 1}次尝试失败，{retry_delay}秒后重试...")
+                            await asyncio.sleep(retry_delay)
                         else:
                             log_error(f"{provider}最终失败")
                             
                 except asyncio.TimeoutError:
-                    log_error(f"{provider}请求超时")
+                    log_error(f"{provider}请求超时（{timeout}秒）")
                     if attempt < max_retries:
-                        await asyncio.sleep(1)
+                        log_info(f"{provider}超时重试，等待{retry_delay}秒...")
+                        await asyncio.sleep(retry_delay)
                 except Exception as e:
                     log_error(f"{provider}异常: {e}")
                     if attempt < max_retries:
-                        await asyncio.sleep(1)
+                        log_info(f"{provider}异常重试，等待{retry_delay}秒...")
+                        await asyncio.sleep(retry_delay)
             
             if not provider_success:
                 failed_providers.append(provider)
@@ -699,6 +702,118 @@ MACD: {macd}
             log_warning(f"⚠️ 失败的AI提供商: {failed_providers}")
         
         return signals
+    
+    def _generate_smart_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """基于技术指标生成智能回退信号"""
+        try:
+            # 获取技术指标数据
+            technical_data = market_data.get('technical_data', {})
+            rsi = float(technical_data.get('rsi', 50))
+            price = float(market_data.get('price', 0))
+            
+            # 获取价格历史数据
+            price_history = market_data.get('price_history', [])
+            price_position = 50  # 默认中位
+            
+            if price_history and len(price_history) >= 20:
+                recent_prices = price_history[-20:]
+                min_price = min(recent_prices)
+                max_price = max(recent_prices)
+                if max_price > min_price:
+                    price_position = ((price - min_price) / (max_price - min_price)) * 100
+            
+            # 基于技术指标生成信号
+            if rsi < 35 and price_position < 30:  # 超卖且价格低位
+                signal = 'BUY'
+                confidence = 0.7
+                reason = f"智能回退: RSI超卖({rsi:.1f})+价格低位({price_position:.1f}%)，建议买入"
+            elif rsi > 70 and price_position > 70:  # 超买且价格高位
+                signal = 'SELL'
+                confidence = 0.7
+                reason = f"智能回退: RSI超买({rsi:.1f})+价格高位({price_position:.1f}%)，建议卖出"
+            elif 40 <= rsi <= 60 and 40 <= price_position <= 60:  # 中性区域
+                signal = 'HOLD'
+                confidence = 0.6
+                reason = f"智能回退: RSI中性({rsi:.1f})+价格中位({price_position:.1f}%)，建议观望"
+            else:
+                # 混合情况，倾向于HOLD
+                signal = 'HOLD'
+                confidence = 0.5
+                reason = f"智能回退: 技术指标矛盾(RSI:{rsi:.1f},位置:{price_position:.1f}%)，保守观望"
+            
+            log_info(f"🤖 智能回退信号生成: {signal} (信心: {confidence:.1f})")
+            log_info(f"📊 回退理由: {reason}")
+            
+            return {
+                'signal': signal,
+                'confidence': confidence,
+                'reason': reason
+            }
+            
+        except Exception as e:
+            log_error(f"智能回退信号生成失败: {e}")
+            # 极端情况下的最终回退
+            return {
+                'signal': 'HOLD',
+                'confidence': 0.5,
+                'reason': '智能回退生成失败，使用保守HOLD信号'
+            }
+    
+    def _generate_smart_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """基于技术指标生成智能回退信号"""
+        try:
+            # 获取技术指标数据
+            technical_data = market_data.get('technical_data', {})
+            rsi = float(technical_data.get('rsi', 50))
+            price = float(market_data.get('price', 0))
+            
+            # 获取价格历史数据
+            price_history = market_data.get('price_history', [])
+            price_position = 50  # 默认中位
+            
+            if price_history and len(price_history) >= 20:
+                recent_prices = price_history[-20:]
+                min_price = min(recent_prices)
+                max_price = max(recent_prices)
+                if max_price > min_price:
+                    price_position = ((price - min_price) / (max_price - min_price)) * 100
+            
+            # 基于技术指标生成信号
+            if rsi < 35 and price_position < 30:  # 超卖且价格低位
+                signal = 'BUY'
+                confidence = 0.7
+                reason = f"智能回退: RSI超卖({rsi:.1f})+价格低位({price_position:.1f}%)，建议买入"
+            elif rsi > 70 and price_position > 70:  # 超买且价格高位
+                signal = 'SELL'
+                confidence = 0.7
+                reason = f"智能回退: RSI超买({rsi:.1f})+价格高位({price_position:.1f}%)，建议卖出"
+            elif 40 <= rsi <= 60 and 40 <= price_position <= 60:  # 中性区域
+                signal = 'HOLD'
+                confidence = 0.6
+                reason = f"智能回退: RSI中性({rsi:.1f})+价格中位({price_position:.1f}%)，建议观望"
+            else:
+                # 混合情况，倾向于HOLD
+                signal = 'HOLD'
+                confidence = 0.5
+                reason = f"智能回退: 技术指标矛盾(RSI:{rsi:.1f},位置:{price_position:.1f}%)，保守观望"
+            
+            log_info(f"🤖 智能回退信号生成: {signal} (信心: {confidence:.1f})")
+            log_info(f"📊 回退理由: {reason}")
+            
+            return {
+                'signal': signal,
+                'confidence': confidence,
+                'reason': reason
+            }
+            
+        except Exception as e:
+            log_error(f"智能回退信号生成失败: {e}")
+            # 极端情况下的最终回退
+            return {
+                'signal': 'HOLD',
+                'confidence': 0.5,
+                'reason': '智能回退生成失败，使用保守HOLD信号'
+            }
     
     def _analyze_signal_diversity(self, signals: List[AISignal]) -> Dict[str, Any]:
         """分析信号多样性 - 增强版，更严格的检测标准"""
@@ -767,23 +882,27 @@ MACD: {macd}
         diversity_analysis = self._analyze_signal_diversity(signals)
         
         if not signals:
-            log_warning("⚠️ 没有可用的AI信号，使用回退信号")
+            log_warning("⚠️ 没有可用的AI信号，使用智能回退信号")
+            # 基于技术指标生成更智能的回退信号
+            smart_fallback = self._generate_smart_fallback_signal(market_data)
             return {
-                'signal': 'HOLD',
-                'confidence': 0.5,
-                'reason': 'AI信号获取失败，使用回退信号',
+                'signal': smart_fallback['signal'],
+                'confidence': smart_fallback['confidence'],
+                'reason': smart_fallback['reason'],
                 'providers': [],
-                'fusion_method': 'fallback',
+                'fusion_method': 'smart_fallback',
                 'fusion_analysis': {
-                    'total_providers': 0,
+                    'total_providers': total_configured,
                     'successful_providers': 0,
-                    'failed_providers': 0,
-                    'fusion_reason': '无可用AI信号，使用保守回退策略'
+                    'failed_providers': total_configured,
+                    'success_rate': 0.0,
+                    'fusion_reason': '所有AI信号获取失败，使用基于技术指标的智能回退策略'
                 }
             }
 
         if len(signals) == 1:
             signal = signals[0]
+            total_configured = len([p for p in ['deepseek', 'kimi', 'qwen', 'openai'] if self.providers.get(p, {}).get('api_key')])
             log_info(f"📊 单信号模式: {signal.provider} -> {signal.signal} (信心: {signal.confidence:.2f})")
             return {
                 'signal': signal.signal,
@@ -792,10 +911,12 @@ MACD: {macd}
                 'providers': [signal.provider],
                 'fusion_method': 'single',
                 'fusion_analysis': {
-                    'total_providers': 1,
+                    'total_providers': total_configured,
                     'successful_providers': 1,
-                    'failed_providers': 0,
-                    'fusion_reason': f'仅{signal.provider}信号可用，直接使用其建议'
+                    'failed_providers': total_configured - 1,
+                    'success_rate': 1.0 / total_configured if total_configured > 0 else 1.0,
+                    'fusion_reason': f'仅{signal.provider}信号可用（成功率: {1.0/total_configured*100:.1f}%），直接使用其建议',
+                    'partial_success': True  # 单信号模式就是部分成功
                 }
             }
 
@@ -805,7 +926,7 @@ MACD: {macd}
         hold_votes = sum(1 for s in signals if s.signal == 'HOLD')
 
         total_signals = len(signals)
-        total_configured = len([p for p in ['deepseek', 'kimi', 'openai'] if self.providers.get(p, {}).get('api_key')])
+        total_configured = len([p for p in ['deepseek', 'kimi', 'qwen', 'openai'] if self.providers.get(p, {}).get('api_key')])
 
         # 计算加权信心 - 基于实际成功信号
         buy_confidence = sum(s.confidence for s in signals if s.signal == 'BUY') / total_signals if total_signals > 0 else 0
@@ -886,7 +1007,8 @@ MACD: {macd}
                 'sell_ratio': sell_ratio,
                 'hold_ratio': hold_ratio,
                 'max_consensus': max_ratio,
-                'fusion_reason': reason
+                'fusion_reason': reason,
+                'partial_success': total_signals < total_configured  # 标记部分成功状态
             },
             'votes': {
                 'BUY': buy_votes,
@@ -941,7 +1063,7 @@ MACD: {macd}
         return result
 
     async def get_ai_signal(self, market_data: Dict[str, Any], provider: str) -> AISignal:
-        """获取单个AI提供商的信号"""
+        """获取单个AI提供商的信号（优化版）"""
         """Get AI signal from a specific provider"""
         if provider not in self.providers or not self.providers[provider].get('api_key'):
             log_error(f"AI提供商 {provider} 未配置或不可用")
@@ -950,12 +1072,12 @@ MACD: {macd}
         try:
             signal = await asyncio.wait_for(
                 self.get_signal_from_provider(provider, market_data),
-                timeout=30.0
+                timeout=10.0  # 从30秒优化到10秒
             )
             return signal
             
         except asyncio.TimeoutError:
-            log_error(f"{provider} 请求超时")
+            log_error(f"{provider} 请求超时（10秒）")
             return None
         except Exception as e:
             log_error(f"{provider} 异常: {e}")
