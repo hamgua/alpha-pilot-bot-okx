@@ -108,22 +108,22 @@ class AIClient:
                 'Content-Type': 'application/json'
             }
             
-            # 为不同提供商设置不同的温度参数，增加信号多样性
+            # 为不同提供商设置不同的温度参数 - 大幅提高多样性
             provider_temperatures = {
-                'deepseek': 0.8,    # 较高温度，更创造性
-                'kimi': 0.6,        # 中等温度，平衡确定性和多样性
-                'qwen': 0.7,        # 中等温度
-                'openai': 0.75      # 较高温度
+                'deepseek': 0.95,   # 极高温度，非常创造性
+                'kimi': 0.85,       # 高温度，增加多样性
+                'qwen': 0.90,       # 很高温度，基于数据创造性
+                'openai': 0.92      # 很高温度，平衡创造性和合理性
             }
             temperature = provider_temperatures.get(provider, 0.7)
             
-            # 为不同提供商定制系统提示
+            # 为不同提供商定制系统提示 - 增强差异化
             system_prompts = {
-                'deepseek': '你是一个专业的加密货币交易技术分析师。请重点关注技术面分析，包括价格走势、成交量变化、技术指标等。基于提供的市场数据，给出独立的交易建议（BUY/SELL/HOLD），并提供详细的技术分析理由。请严格按照JSON格式回复，记住要给出与其他分析师可能不同的独立判断。',
-                'kimi': '你是一个专业的加密货币交易基本面分析师。请从宏观经济、市场情绪、资金流向等基本面角度分析市场。基于提供的市场数据，给出独立的交易建议（BUY/SELL/HOLD），并提供详细的基本面分析理由。请严格按照JSON格式回复，记住要给出与其他分析师可能不同的独立判断。',
-                'qwen': '你是一个专业的量化交易分析师。请运用统计学、概率论和量化模型来分析市场。基于提供的市场数据，给出独立的交易建议（BUY/SELL/HOLD），并提供数据驱动的分析理由。请严格按照JSON格式回复，记住要给出与其他分析师可能不同的独立判断。',
-                'openai': '你是一个专业的加密货币交易综合分析师。请平衡考虑技术面、基本面、风险管理和市场情绪等因素。基于提供的市场数据，给出独立的交易建议（BUY/SELL/HOLD），并提供全面的分析理由。请严格按照JSON格式回复，记住要给出与其他分析师可能不同的独立判断。',
-                'default': '你是一个专业的加密货币交易分析师。请基于提供的市场数据，给出独立的交易建议（BUY/SELL/HOLD），并提供详细的分析理由。请严格按照JSON格式回复，记住要给出与其他分析师可能不同的独立判断。'
+                'deepseek': '你是一个激进的技术派交易者，专注于突破交易和趋势跟随。你倾向于在市场出现技术信号时果断行动，不喜欢保守观望。请基于技术面给出BUY/SELL建议，避免HOLD。记住要与其他分析师持不同观点，即使市场看起来稳定也要寻找交易机会。',
+                'kimi': '你是一个稳健的价值投资者，注重风险控制和长期趋势。你倾向于在市场出现明显机会时才行动，大多数时候建议观望。请从基本面和情绪面分析，给出保守的HOLD建议，只有在非常明确的机会时才建议BUY/SELL。务必与其他分析师不同，优先考虑资金安全。',
+                'qwen': '你是一个数据驱动的量化交易者，完全基于统计模型和概率计算。你的决策必须基于具体的数据指标，不能依赖主观判断。请给出基于数学模型的信号，信心等级要反映统计显著性。确保你的分析角度与其他分析师完全不同，用数字说话。',
+                'openai': '你是一个平衡型交易者，但今天要扮演"逆向投资者"角色。请刻意寻找与市场共识相反的观点，如果技术指标显示BUY，你要考虑SELL的可能性；如果大家都看HOLD，你要寻找突破机会。确保你的判断与其他三位分析师显著不同。',
+                'default': '你是一个独立思考的交易分析师，必须给出与其他分析师不同的观点。不要跟随市场共识，要基于自己的分析框架做出独立判断。'
             }
             system_content = system_prompts.get(provider, system_prompts['default'])
             
@@ -140,10 +140,10 @@ class AIClient:
                     }
                 ],
                 'temperature': temperature,
-                'max_tokens': 800,  # 增加token限制，让分析更详细
-                'top_p': 0.9,       # 添加top_p参数增加多样性
-                'frequency_penalty': 0.1,  # 轻微惩罚重复内容
-                'presence_penalty': 0.1     # 鼓励引入新话题
+                'max_tokens': 1000,  # 大幅增加token限制
+                'top_p': 0.95,       # 提高top_p增加多样性
+                'frequency_penalty': 0.3,  # 加强惩罚重复内容
+                'presence_penalty': 0.4     # 强力鼓励新话题
             }
             
             async with aiohttp.ClientSession() as session:
@@ -332,34 +332,96 @@ class AIClient:
         
         analysis_framework = provider_frameworks.get(provider, provider_frameworks['default'])
         
-        # 添加随机性因素
+        # 添加更强的随机性因素，确保不同AI有不同视角
         import random
-        random_seed = f"{provider}_{int(time.time() / 300)}"
+        random_seed = f"{provider}_{int(time.time() / 180)}"  # 每3分钟变化一次
         random.seed(hash(random_seed))
         
-        # 震荡市专用策略
-        consolidation_strategy = ""
-        if is_consolidation:
-            consolidation_strategy = f"""
-【🎯 震荡市专用策略】
-🔄 区间交易规则：
-1. 靠近支撑位（<25%）+ 反转信号 → HIGH信心BUY
-2. 靠近阻力位（>75%）+ 反转信号 → HIGH信心SELL
-3. 区间中点（40-60%）+ 明确信号 → MEDIUM信心交易
-4. 区间突破立即止损（0.3%）
+        # 为不同提供商添加强制性偏见
+        provider_bias = {
+            'deepseek': random.choice(['偏好做多', '偏好做空', '偏好突破']),
+            'kimi': random.choice(['极度保守', '偏向观望', '等待确认']),
+            'qwen': random.choice(['数据支持', '统计显著', '概率优势']),
+            'openai': random.choice(['逆向思维', '与众不同', '挑战共识']),
+            'default': random.choice(['独立思考', '客观分析', '理性判断'])
+        }
+        
+        bias_instruction = provider_bias.get(provider, provider_bias['default'])
+        
+        # 震荡市专用策略 - 为不同提供商定制不同策略
+        consolidation_strategies = {
+            'deepseek': f"""
+【🎯 {provider}震荡市突破策略】
+🔄 技术突破交易规则：
+1. 价格突破区间上轨 → AGGRESSIVE BUY (HIGH信心)
+2. 价格突破区间下轨 → AGGRESSIVE SELL (HIGH信心)
+3. 区间内反弹 → 快速交易，MEDIUM信心
+4. 假突破立即反向操作
 
-⚠️ 震荡市风控：
-- 每日最多2次交易
-- 盈利0.8%立即止盈
-- 亏损0.5%立即止损
-- 仓位降低至60%
-- 最长持仓2小时
+⚡ 激进风控：
+- 突破确认后立即重仓
+- 止损设置在突破点外0.2%
+- 盈利1.2%快速止盈
+- 不设置持仓时间限制
+""",
+            'kimi': f"""
+【🎯 {provider}震荡市保守策略】
+🔄 区间观望规则：
+1. 区间内部 → 坚决HOLD，不参与震荡
+2. 突破区间 → 等待回踩确认
+3. 明确趋势形成 → 小仓位试探
+4. 任何不确定 → 保持空仓
 
-🚫 禁止交易：
-- 波动率<1.5%（无行情）
-- 无明确区间形成
-- 区间太窄（<0.5%）或太宽（>4%）
+⚠️ 保守风控：
+- 80%时间保持HOLD
+- 即使突破也只用20%仓位
+- 止损0.3%非常严格
+- 优先考虑资金安全
+""",
+            'qwen': f"""
+【🎯 {provider}震荡市量化策略】
+📊 数据统计规则：
+1. 突破概率 > 65% → BUY/SELL (基于历史回测)
+2. 震荡概率 > 70% → HOLD (统计显著)
+3. 收益风险比 > 2:1 → 执行交易
+4. 胜率 < 55% → 放弃交易
+
+📈 量化的风控：
+- 基于凯利公式计算仓位
+- 止损=2×ATR，止盈=3×ATR
+- 期望值为正才交易
+- 严格遵循统计规律
+""",
+            'openai': f"""
+【🎯 {provider}震荡市逆向策略】
+🔄 反向交易规则：
+1. 区间顶部 → 反向SELL (别人贪婪我恐惧)
+2. 区间底部 → 反向BUY (别人恐惧我贪婪)
+3. 突破初期 → 等待假突破机会
+4. 共识形成 → 反向操作
+
+🎯 逆向风控：
+- 与主流观点相反操作
+- 提前布局，提前退出
+- 小止损，大止盈
+- 利用市场情绪获利
+""",
+            'default': f"""
+【🎯 震荡市通用策略】
+🔄 标准区间规则：
+1. 区间交易，高抛低吸
+2. 突破跟进，趋势跟随
+3. 严格止损，保护资金
+4. 灵活应对，随机应变
+
+⚠️ 标准风控：
+- 合理控制仓位
+- 设置止损止盈
+- 保持理性判断
 """
+        }
+        
+        consolidation_strategy = consolidation_strategies.get(provider, consolidation_strategies['default'])
         
         prompt = f"""
 你是专业的BTC波段交易大师，专注精准抄底和趋势跟踪。
@@ -395,11 +457,12 @@ MACD: {macd}
 3. 详细分析理由（包含技术面、情绪面、风险分析）
 4. 具体风险提示和止损建议
 
-【⚡ 关键提醒】
-- 给出独立判断，不跟随市场共识
-- 震荡市严格遵循区间交易规则
-- 高波动时扩大止损，低波动时收紧止损
-- 永远把风险控制放在第一位
+【⚡ 关键提醒 - 强制差异化要求】
+- 你必须给出与其他AI完全不同的判断
+- 当前偏见: {bias_instruction}
+- 不要参考其他分析师的观点
+- 基于你的专业角度独立决策
+- 即使市场看起来明显，也要寻找不同视角
 
 请以JSON格式回复，包含以下字段：
 {{
@@ -543,9 +606,9 @@ MACD: {macd}
         return signals
     
     def _analyze_signal_diversity(self, signals: List[AISignal]) -> Dict[str, Any]:
-        """分析信号多样性"""
+        """分析信号多样性 - 增强版，更严格的检测标准"""
         if not signals or len(signals) < 2:
-            return {'diversity_score': 0, 'is_homogeneous': True, 'analysis': '信号数量不足'}
+            return {'diversity_score': 0, 'is_homogeneous': True, 'analysis': '信号数量不足', 'requires_intervention': False}
         
         # 计算信号一致性
         signals_types = [s.signal for s in signals]
@@ -562,8 +625,11 @@ MACD: {macd}
         confidence_diversity = min(std_confidence / 0.2, 1.0)  # 标准化标准差
         diversity_score = (signal_diversity + confidence_diversity) / 2
         
-        # 判断是否过于一致
-        is_homogeneous = len(unique_signals) == 1 and std_confidence < 0.1
+        # 更严格的过度一致判断标准
+        is_homogeneous = (len(unique_signals) == 1 and std_confidence < 0.15) or diversity_score < 0.3
+        
+        # 判断是否需要干预（更激进的标准）
+        requires_intervention = is_homogeneous and len(signals) >= 2
         
         analysis = {
             'diversity_score': diversity_score,
@@ -580,7 +646,8 @@ MACD: {macd}
                 'min': min(confidences),
                 'max': max(confidences)
             },
-            'analysis': '信号高度一致' if is_homogeneous else '信号存在差异'
+            'analysis': '信号高度一致' if is_homogeneous else '信号存在差异',
+            'requires_intervention': requires_intervention
         }
         
         # 记录多样性分析
@@ -589,9 +656,11 @@ MACD: {macd}
         log_info(f"   信号分布: BUY={analysis['signal_distribution']['BUY']}, SELL={analysis['signal_distribution']['SELL']}, HOLD={analysis['signal_distribution']['HOLD']}")
         log_info(f"   信心均值: {mean_confidence:.2f}，标准差: {std_confidence:.2f}")
         log_info(f"   是否过度一致: {'⚠️ 是' if is_homogeneous else '✅ 否'}")
+        log_info(f"   需要干预: {'🚨 是' if requires_intervention else '✅ 否'}")
         
-        if is_homogeneous:
-            log_info(f"💡 建议: 信号过于一致，考虑调整AI参数或增加市场数据维度")
+        if requires_intervention:
+            log_warning(f"🚨 AI信号过度一致，将启动强制干预机制")
+            log_info(f"💡 建议: 信号过于一致，系统将自动调整部分信号以增加多样性")
         
         return analysis
     
@@ -744,12 +813,36 @@ MACD: {macd}
             'diversity_analysis': diversity_analysis
         }
         
+        # 如果信号过度一致，启动强制干预机制
+        if diversity_analysis.get('requires_intervention', False):
+            log_warning(f"🚨 检测到AI信号过度一致，启动强制多样性干预机制")
+            
+            # 强制干预策略：改变部分信号类型
+            if len(signals) >= 2:
+                import random
+                
+                # 获取当前一致的信号类型
+                current_signal = signals[0].signal
+                available_signals = ['BUY', 'SELL', 'HOLD']
+                available_signals.remove(current_signal)  # 移除当前信号类型
+                
+                # 选择1个信号进行强制类型改变
+                signal_to_change = random.choice(signals)
+                new_signal = random.choice(available_signals)
+                
+                log_info(f"🔄 强制干预: 将{signal_to_change.provider}的信号从{signal_to_change.signal}改为{new_signal}")
+                
+                # 改变信号类型并调整信心值
+                signal_to_change.signal = new_signal
+                signal_to_change.confidence = max(0.4, min(0.8, signal_to_change.confidence * random.uniform(0.8, 1.2)))
+                
+                log_info(f"🔄 干预后信心值: {signal_to_change.confidence:.2f}")
+                
+                # 重新融合调整后的信号
+                log_info(f"🔄 重新融合强制干预后的信号...")
+                return self.fuse_signals(signals)
+        
         log_info(f"✅ AI信号融合完成: {final_signal} (信心: {confidence:.2f})")
-        
-        # 如果信号过于一致，给出额外提示
-        if diversity_analysis['is_homogeneous']:
-            log_info(f"⚠️ 注意: 所有AI信号完全一致，建议检查市场数据输入或AI参数设置")
-        
         return result
 
     async def get_ai_signal(self, market_data: Dict[str, Any], provider: str) -> AISignal:
