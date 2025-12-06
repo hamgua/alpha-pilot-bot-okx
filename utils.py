@@ -65,6 +65,7 @@ def log_error(message):
 # 文件日志系统
 _log_file_handler = None
 _log_file_date = None
+_error_log_file_handler = None
 
 def _get_log_file_path():
     """获取当前日期的日志文件路径"""
@@ -77,12 +78,24 @@ def _get_log_file_path():
     log_filename = f"alpha-pilot-bot-okx-{current_date}.log"
     return log_dir / log_filename, current_date
 
+def _get_error_log_file_path():
+    """获取当前日期的错误日志文件路径"""
+    from pathlib import Path
+    current_date = datetime.now().strftime('%Y%m%d')
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    # 生成错误日志文件名：error-alpha-pilot-bot-okx-YYYYMMDD.log
+    error_log_filename = f"error-alpha-pilot-bot-okx-{current_date}.log"
+    return log_dir / error_log_filename, current_date
+
 def _write_to_log_file(message):
     """写入日志到文件"""
-    global _log_file_handler, _log_file_date
+    global _log_file_handler, _log_file_date, _error_log_file_handler
     
     try:
         log_file_path, current_date = _get_log_file_path()
+        error_log_file_path, _ = _get_error_log_file_path()
         
         # 检查是否需要创建新的日志文件（日期变化）
         if _log_file_date != current_date or _log_file_handler is None:
@@ -92,14 +105,25 @@ def _write_to_log_file(message):
                     _log_file_handler.close()
                 except:
                     pass
+            if _error_log_file_handler is not None:
+                try:
+                    _error_log_file_handler.close()
+                except:
+                    pass
             
             # 创建新的文件句柄
             _log_file_handler = open(log_file_path, 'a', encoding='utf-8')
+            _error_log_file_handler = open(error_log_file_path, 'a', encoding='utf-8')
             _log_file_date = current_date
         
-        # 写入日志消息
+        # 写入主日志文件（所有日志）
         _log_file_handler.write(message + '\n')
         _log_file_handler.flush()  # 立即刷新到磁盘
+        
+        # 如果是ERROR或WARNING日志，也写入错误日志文件
+        if '[ERROR]' in message or '[WARNING]' in message:
+            _error_log_file_handler.write(message + '\n')
+            _error_log_file_handler.flush()  # 立即刷新到磁盘
         
     except Exception as e:
         # 如果文件写入失败，只打印错误信息，不影响主程序
@@ -107,11 +131,17 @@ def _write_to_log_file(message):
 
 def close_log_file():
     """关闭日志文件句柄（程序退出时调用）"""
-    global _log_file_handler
+    global _log_file_handler, _error_log_file_handler
     if _log_file_handler is not None:
         try:
             _log_file_handler.close()
             _log_file_handler = None
+        except:
+            pass
+    if _error_log_file_handler is not None:
+        try:
+            _error_log_file_handler.close()
+            _error_log_file_handler = None
         except:
             pass
 
