@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from config import config
 from utils import log_info, log_warning, log_error
+from fallback_strategies import generate_enhanced_fallback_signal
 
 @dataclass
 class AISignal:
@@ -1129,8 +1130,50 @@ MACD: {macd}
         except Exception as e:
             log_error(f"超时性能记录失败: {e}")
     
+    async def _generate_enhanced_fallback_signal_async(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """生成增强兜底信号 - 使用专门的兜底策略模块"""
+        try:
+            log_info("🛡️ 启动增强兜底信号生成...")
+            
+            # 获取AI信号历史用于兜底分析
+            from utils import memory_manager
+            signal_history = memory_manager.get_history('signals', limit=20)
+            
+            # 调用增强兜底引擎
+            enhanced_fallback = await generate_enhanced_fallback_signal(market_data, signal_history)
+            
+            if enhanced_fallback and enhanced_fallback.get('is_enhanced_fallback'):
+                log_info(f"✅ 增强兜底信号生成成功: {enhanced_fallback['signal']} (信心: {enhanced_fallback['confidence']:.2f}, 质量: {enhanced_fallback['quality_score']:.2f})")
+                log_info(f"📊 兜底类型: {enhanced_fallback['fallback_type']}")
+                log_info(f"💡 兜底理由: {enhanced_fallback['reason']}")
+                
+                # 记录兜底信号使用统计
+                self._update_fallback_stats(enhanced_fallback)
+                
+                return enhanced_fallback
+            else:
+                log_warning("⚠️ 增强兜底信号生成失败，回退到传统兜底")
+                return self._generate_smart_fallback_signal(market_data)
+                
+        except Exception as e:
+            log_error(f"增强兜底信号生成异常: {e}")
+            log_warning("⚠️ 增强兜底失败，回退到传统兜底")
+            return self._generate_smart_fallback_signal(market_data)
+    
+    def _update_fallback_stats(self, fallback_signal: Dict[str, Any]) -> None:
+        """更新兜底信号使用统计"""
+        try:
+            fallback_type = fallback_signal.get('fallback_type', 'unknown')
+            quality_score = fallback_signal.get('quality_score', 0)
+            
+            # 这里可以添加统计逻辑，如记录兜底类型使用频率、质量分布等
+            log_info(f"📊 兜底统计: 类型={fallback_type}, 质量={quality_score:.2f}")
+            
+        except Exception as e:
+            log_warning(f"兜底统计更新失败: {e}")
+    
     def _generate_smart_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """基于增强技术指标生成智能回退信号 - 多因子分析"""
+        """基于增强技术指标生成智能回退信号 - 多因子分析（保持原有逻辑作为回退）"""
         try:
             # 获取扩展技术指标数据
             technical_data = market_data.get('technical_data', {})
@@ -1221,7 +1264,9 @@ MACD: {macd}
                 'confidence': final_confidence,
                 'reason': reason,
                 'signal_score': signal_score,
-                'confidence_factors': confidence_factors
+                'confidence_factors': confidence_factors,
+                'is_fallback': True,
+                'fallback_type': 'enhanced_technical'
             }
             
         except Exception as e:
@@ -1232,7 +1277,9 @@ MACD: {macd}
                 'confidence': 0.5,
                 'reason': '增强智能回退生成失败，使用保守HOLD信号',
                 'signal_score': 0.0,
-                'confidence_factors': []
+                'confidence_factors': [],
+                'is_fallback': True,
+                'fallback_type': 'error'
             }
     
     def _calculate_rsi_factor(self, rsi: float, price_position: float) -> Dict[str, Any]:

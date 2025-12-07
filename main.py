@@ -524,7 +524,46 @@ class AlphaArenaBot:
             return await self._get_fallback_signal(market_data)
     
     async def _get_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """获取回退信号（增强版）"""
+        """获取增强兜底信号（集成新的兜底引擎）"""
+        try:
+            log_info("🛡️ 启动增强兜底信号生成流程...")
+            
+            # 1. 首先尝试使用新的增强兜底引擎
+            try:
+                from fallback_strategies import generate_enhanced_fallback_signal
+                
+                # 获取AI信号历史用于兜底分析
+                signal_history = memory_manager.get_history('signals', limit=20)
+                
+                # 调用增强兜底引擎
+                enhanced_fallback = await generate_enhanced_fallback_signal(market_data, signal_history)
+                
+                if enhanced_fallback and enhanced_fallback.get('is_enhanced_fallback'):
+                    log_info(f"✅ 增强兜底引擎成功生成信号: {enhanced_fallback['signal']} (信心: {enhanced_fallback['confidence']:.2f}, 质量: {enhanced_fallback['quality_score']:.2f})")
+                    log_info(f"📊 兜底类型: {enhanced_fallback['fallback_type']}")
+                    log_info(f"💡 兜底理由: {enhanced_fallback['reason']}")
+                    
+                    # 记录兜底统计
+                    self._record_fallback_usage(enhanced_fallback)
+                    
+                    return enhanced_fallback
+                else:
+                    log_warning("⚠️ 增强兜底引擎未生成有效信号，回退到传统兜底")
+                    
+            except Exception as e:
+                log_error(f"增强兜底引擎调用失败: {e}")
+                log_warning("⚠️ 增强兜底引擎异常，回退到传统兜底")
+            
+            # 2. 回退到传统的兜底逻辑
+            return await self._get_traditional_fallback_signal(market_data)
+            
+        except Exception as e:
+            log_error(f"增强兜底信号生成失败: {e}")
+            # 最终兜底：基础持有信号
+            return self._create_emergency_fallback_signal(market_data)
+    
+    async def _get_traditional_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """获取传统兜底信号（作为增强兜底的回退）"""
         return self._get_fallback_signal_sync(market_data)
         
     def _get_fallback_signal_sync(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -572,6 +611,59 @@ class AlphaArenaBot:
             log_error(f"增强回退信号生成失败: {e}")
             # 最终回退：基于简单技术分析
             return self._create_fallback_signal(market_data)
+    
+    def _record_fallback_usage(self, fallback_signal: Dict[str, Any]) -> None:
+        """记录兜底信号使用情况"""
+        try:
+            fallback_type = fallback_signal.get('fallback_type', 'unknown')
+            quality_score = fallback_signal.get('quality_score', 0)
+            confidence = fallback_signal.get('confidence', 0)
+            
+            log_info(f"📊 兜底使用统计:")
+            log_info(f"   兜底类型: {fallback_type}")
+            log_info(f"   信号质量: {quality_score:.2f}")
+            log_info(f"   信号信心: {confidence:.2f}")
+            log_info(f"   可靠性因子: {fallback_signal.get('reliability_factors', [])}")
+            
+            # 这里可以添加更详细的统计逻辑，如：
+            # - 按兜底类型统计使用频率
+            # - 质量评分分布
+            # - 兜底信号的成功率跟踪
+            
+        except Exception as e:
+            log_warning(f"兜底使用记录失败: {e}")
+    
+    def _create_emergency_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """创建紧急兜底信号（最终保障）"""
+        try:
+            current_price = market_data.get('price', 0)
+            
+            emergency_signal = {
+                'signal': 'HOLD',
+                'confidence': 0.3,  # 最低信心度
+                'reason': '紧急兜底: 所有兜底机制失效，强制保守持有',
+                'timestamp': datetime.now().isoformat(),
+                'fallback_type': 'emergency',
+                'emergency_context': {
+                    'price': current_price,
+                    'data_available': current_price > 0,
+                    'timestamp': datetime.now().isoformat()
+                }
+            }
+            
+            log_warning("🚨 使用紧急兜底信号: 强制HOLD，最低信心度")
+            return emergency_signal
+            
+        except Exception as e:
+            log_error(f"紧急兜底信号创建失败: {e}")
+            # 最后的最后：返回一个绝对安全的信号
+            return {
+                'signal': 'HOLD',
+                'confidence': 0.2,
+                'reason': '系统严重错误，绝对保守持有',
+                'timestamp': datetime.now().isoformat(),
+                'fallback_type': 'critical_error'
+            }
     
     def _create_intelligent_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """创建基于技术指标的智能回退信号"""
