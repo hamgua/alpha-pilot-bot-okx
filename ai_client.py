@@ -31,39 +31,39 @@ class AIClient:
     """AI客户端 - 支持多AI提供商"""
     
     def __init__(self):
-        # 超时配置 - 基于不同AI提供商的性能特点
+        # 增强超时配置 - 基于实际连接问题优化
         self.timeout_config = {
             'deepseek': {
-                'connection_timeout': 5.0,    # 连接超时
-                'response_timeout': 8.0,      # 响应超时
-                'total_timeout': 12.0,        # 总超时
-                'retry_base_delay': 2.0,      # 基础重试延迟
-                'max_retries': 2,             # 最大重试次数
-                'performance_score': 0.85     # 性能评分（基于历史数据）
+                'connection_timeout': 8.0,    # 增加连接超时时间
+                'response_timeout': 12.0,     # 增加响应超时时间
+                'total_timeout': 20.0,        # 增加总超时时间
+                'retry_base_delay': 3.0,      # 增加基础重试延迟
+                'max_retries': 3,             # 增加最大重试次数
+                'performance_score': 0.75     # 降低性能评分（基于连接问题）
             },
             'kimi': {
-                'connection_timeout': 4.0,
-                'response_timeout': 6.0,
-                'total_timeout': 10.0,
-                'retry_base_delay': 1.5,
-                'max_retries': 2,
-                'performance_score': 0.90
+                'connection_timeout': 6.0,    # 增加连接超时时间
+                'response_timeout': 10.0,     # 增加响应超时时间
+                'total_timeout': 18.0,        # 增加总超时时间
+                'retry_base_delay': 2.5,      # 增加基础重试延迟
+                'max_retries': 3,             # 增加最大重试次数
+                'performance_score': 0.80     # 降低性能评分（基于连接问题）
             },
             'qwen': {
-                'connection_timeout': 3.0,
-                'response_timeout': 5.0,
-                'total_timeout': 8.0,
-                'retry_base_delay': 1.0,
-                'max_retries': 2,
-                'performance_score': 0.95
+                'connection_timeout': 5.0,    # 增加连接超时时间
+                'response_timeout': 8.0,      # 增加响应超时时间
+                'total_timeout': 15.0,        # 增加总超时时间
+                'retry_base_delay': 2.0,      # 增加基础重试延迟
+                'max_retries': 3,             # 增加最大重试次数
+                'performance_score': 0.85     # 降低性能评分
             },
             'openai': {
-                'connection_timeout': 6.0,
-                'response_timeout': 10.0,
-                'total_timeout': 15.0,
-                'retry_base_delay': 3.0,
-                'max_retries': 1,
-                'performance_score': 0.80
+                'connection_timeout': 10.0,   # 增加连接超时时间
+                'response_timeout': 15.0,     # 增加响应超时时间
+                'total_timeout': 25.0,        # 增加总超时时间
+                'retry_base_delay': 4.0,      # 增加基础重试延迟
+                'max_retries': 2,             # 保持重试次数
+                'performance_score': 0.70     # 降低性能评分
             }
         }
         
@@ -78,21 +78,22 @@ class AIClient:
             }
         }
         
-        # 重试成本控制
+        # 增强重试成本控制 - 适应连接问题
         self.retry_cost_config = {
-            'max_daily_cost': 100,  # 每日最大重试成本（请求次数）
+            'max_daily_cost': 150,  # 增加每日最大重试成本
             'current_daily_cost': 0,
             'cost_weights': {
-                'deepseek': 1.0,
-                'kimi': 1.2,
-                'qwen': 0.8,
-                'openai': 1.5
+                'deepseek': 1.2,   # 增加成本权重（连接问题较多）
+                'kimi': 1.3,       # 增加成本权重（超时问题）
+                'qwen': 1.0,       # 保持成本权重
+                'openai': 1.8      # 增加成本权重（响应慢）
             }
         }
         try:
+            # 增强的AI提供商配置加载
             ai_models = config.get('ai', 'models')
             if not ai_models:
-                log_error("AI models配置为空，使用环境变量回退")
+                log_warning("AI models配置为空，使用环境变量回退")
                 # 使用环境变量作为回退
                 import os
                 ai_models = {
@@ -103,21 +104,36 @@ class AIClient:
                 }
             
             self.providers = {}
+            self.provider_configs = {}  # 新增独立的配置存储
             
-            # 安全地构建providers
-            for provider_name, url, model in [
+            # 增强的提供商配置构建
+            provider_configs = [
                 ('deepseek', 'https://api.deepseek.com/v1/chat/completions', 'deepseek-chat'),
                 ('kimi', 'https://api.moonshot.cn/v1/chat/completions', 'moonshot-v1-8k'),
                 ('qwen', 'https://dashscope.aliyuncs.com/compatible/v1/chat/completions', 'qwen3-max'),
                 ('openai', 'https://api.openai.com/v1/chat/completions', 'gpt-3.5-turbo')
-            ]:
+            ]
+            
+            for provider_name, url, model in provider_configs:
                 api_key = ai_models.get(provider_name) if ai_models else None
                 if api_key and api_key.strip():  # 确保API密钥有效且非空
+                    # 存储到providers（保持兼容性）
                     self.providers[provider_name] = {
                         'url': url,
                         'model': model,
                         'api_key': api_key.strip()
                     }
+                    
+                    # 存储到provider_configs（增强配置）
+                    self.provider_configs[provider_name] = {
+                        'url': url,
+                        'model': model,
+                        'api_key': api_key.strip(),
+                        'temperature': self.timeout_config[provider_name].get('temperature', 0.7),
+                        'max_tokens': 150,
+                        'top_p': 0.9
+                    }
+                    
                     log_info(f"✅ {provider_name} API已配置")
                 else:
                     log_warning(f"⚠️ {provider_name} API密钥未配置或无效")
@@ -263,43 +279,81 @@ class AIClient:
             # 记录请求开始时间
             request_start_time = time.time()
             
-            async with aiohttp.ClientSession() as session:
+            # 创建持久化会话，提高连接稳定性
+            connector = aiohttp.TCPConnector(
+                limit=30,  # 连接池限制
+                limit_per_host=10,  # 每个主机最大连接数
+                ttl_dns_cache=300,  # DNS缓存时间5分钟
+                use_dns_cache=True,  # 启用DNS缓存
+                keepalive_timeout=30,  # 保持连接超时
+                enable_cleanup_closed=True  # 清理已关闭的连接
+            )
+            
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(
+                    total=adjusted_timeout['total_timeout'],
+                    connect=adjusted_timeout['connection_timeout'],
+                    sock_read=adjusted_timeout['response_timeout']
+                )
+            ) as session:
                 try:
                     async with session.post(
                         url,
                         headers=headers,
                         json=payload,
-                        timeout=aiohttp.ClientTimeout(
-                            total=adjusted_timeout['total_timeout'],
-                            connect=adjusted_timeout['connection_timeout'],
-                            sock_read=adjusted_timeout['response_timeout']
-                        )
+                        ssl=True,  # 启用SSL验证
+                        allow_redirects=True,  # 允许重定向
+                        max_redirects=5  # 最大重定向次数
                     ) as response:
                         
                         # 记录响应时间
                         response_time = time.time() - request_start_time
                         self._update_timeout_stats(provider, response_time, True)
                         
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                            if data is None:
-                                log_error(f"{provider} 响应数据为None")
+                        if response.status == 200:
+                            try:
+                                # 先读取响应文本，再解析JSON，避免连接关闭问题
+                                response_text = await response.text()
+                                if not response_text:
+                                    log_error(f"{provider} 响应文本为空")
+                                    return None
+                                
+                                data = json.loads(response_text)
+                                if data is None:
+                                    log_error(f"{provider} 响应数据为None")
+                                    return None
+                                return self._parse_ai_response(provider, data)
+                            except json.JSONDecodeError as e:
+                                log_error(f"{provider} JSON解析失败: {e}")
+                                log_error(f"{provider} 响应文本: {response_text[:200]}...")
                                 return None
-                            return self._parse_ai_response(provider, data)
-                        except Exception as e:
-                            log_error(f"{provider} 响应解析失败: {type(e).__name__}: {e}")
-                            import traceback
-                            log_error(f"响应解析堆栈:\n{traceback.format_exc()}")
+                            except Exception as e:
+                                log_error(f"{provider} 响应处理失败: {type(e).__name__}: {e}")
+                                import traceback
+                                log_error(f"响应处理堆栈:\n{traceback.format_exc()}")
+                                return None
+                        else:
+                            error_text = await response.text()
+                            log_error(f"{provider} API调用失败: {response.status} - {error_text[:200]}")
                             return None
-                    else:
-                        log_error(f"{provider} API调用失败: {response.status}")
-                        return None
                         
                 except asyncio.TimeoutError:
                     # 记录超时统计
                     self._update_timeout_stats(provider, 0, False, timeout_type='timeout')
                     log_error(f"{provider} 请求超时（{adjusted_timeout['total_timeout']}秒）")
+                    raise  # 重新抛出异常供上层处理
+                    
+                except aiohttp.ClientConnectionError as e:
+                    # 专门的连接错误处理
+                    self._update_timeout_stats(provider, 0, False, timeout_type='connection_error')
+                    log_error(f"{provider} 连接错误: {type(e).__name__}: {e}")
+                    raise  # 重新抛出异常供上层处理
+                    
+                except aiohttp.ClientPayloadError as e:
+                    # 专门的载荷错误处理
+                    self._update_timeout_stats(provider, 0, False, timeout_type='payload_error')
+                    log_error(f"{provider} 载荷错误: {type(e).__name__}: {e}")
                     raise  # 重新抛出异常供上层处理
                     
                 except Exception as e:
@@ -432,34 +486,40 @@ class AIClient:
             }
     
     async def _retry_provider_request(self, provider: str, prompt: str, timeout: float, session: aiohttp.ClientSession) -> Optional[Dict[str, Any]]:
-        """重试失败的AI提供商请求"""
+        """增强版重试机制 - 修复连接问题"""
         config = self.provider_configs.get(provider)
         if not config:
             return None
             
-        # 指数退避延迟
-        retry_delays = [2.4, 4.8, 9.6]  # 递增的延迟时间
-        max_retries = min(len(retry_delays), 1)  # 只重试1次，避免过多请求成本
+        # 优化的指数退避策略
+        retry_delays = [1.5, 3.0, 6.0]  # 更合理的退避时间
+        max_retries = min(len(retry_delays), 2)  # 最多重试2次
         
         for retry_count in range(max_retries):
             delay = retry_delays[retry_count]
-            log_info(f"⏰ {provider} 指数退避: 第{retry_count}次重试，延迟{delay}秒")
+            log_info(f"⏰ {provider} 增强重试: 第{retry_count + 1}次尝试，延迟{delay}秒")
             
             await asyncio.sleep(delay)
             
+            # 检查重试成本限制
+            if not self._check_retry_cost_limit(provider):
+                log_warning(f"⚠️ {provider} 重试成本超出限制，停止重试")
+                break
+                
             # 更新重试成本
-            cost = self.provider_costs.get(provider, 0)
-            new_cost = cost + (retry_count + 1) * 0.6  # 每次重试增加0.6成本
-            self.provider_costs[provider] = new_cost
-            log_info(f"💰 重试成本更新: {provider} +{(retry_count + 1) * 0.6}, 当前总计: {new_cost}")
+            self._update_retry_cost(provider)
             
             try:
-                # 构建请求
+                # 构建增强的请求头
                 headers = {
                     'Authorization': f'Bearer {config["api_key"]}',
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'AlphaPilotBot/1.0',
+                    'Accept': 'application/json',
+                    'Connection': 'keep-alive'
                 }
                 
+                # 构建请求载荷
                 payload = {
                     'model': config['model'],
                     'messages': [{'role': 'user', 'content': prompt}],
@@ -468,36 +528,73 @@ class AIClient:
                     'top_p': config.get('top_p', 0.9)
                 }
                 
-                # 发送重试请求
+                # 发送增强重试请求
                 async with session.post(
                     config['url'],
                     headers=headers,
                     json=payload,
-                    ssl=False,
+                    ssl=True,  # 启用SSL
+                    allow_redirects=True,
+                    max_redirects=3,
                     timeout=aiohttp.ClientTimeout(total=timeout)
                 ) as response:
                     
                     if response.status == 200:
                         try:
-                            data = await response.json()
+                            # 先读取文本再解析JSON，避免连接问题
+                            response_text = await response.text()
+                            if not response_text:
+                                log_warning(f"{provider} 重试响应为空")
+                                continue
+                                
+                            data = json.loads(response_text)
                             log_info(f"✅ {provider} 重试成功")
                             return data
+                        except json.JSONDecodeError as e:
+                            log_error(f"{provider} 重试JSON解析失败: {e}")
+                            log_error(f"{provider} 响应文本: {response_text[:100]}...")
+                            continue
                         except Exception as e:
-                            log_error(f"{provider} 重试响应解析失败: {e}")
+                            log_error(f"{provider} 重试响应处理失败: {e}")
                             continue
                     else:
                         error_text = await response.text()
-                        log_warning(f"{provider} 重试失败: {response.status} - {error_text}")
-                        continue
+                        log_warning(f"{provider} 重试失败: {response.status} - {error_text[:100]}...")
+                        
+                        # 针对特定状态码的特殊处理
+                        if response.status == 429:  # 速率限制
+                            log_warning(f"{provider} 遇到速率限制，增加延迟")
+                            await asyncio.sleep(delay * 2)  # 额外延迟
+                        elif response.status >= 500:  # 服务器错误
+                            log_warning(f"{provider} 服务器错误，继续重试")
+                            continue
+                        else:
+                            log_warning(f"{provider} 客户端错误，停止重试")
+                            break
                         
             except asyncio.TimeoutError:
                 log_warning(f"{provider} 重试超时")
+                # 超时时增加下一次重试的延迟
+                if retry_count < max_retries - 1:
+                    await asyncio.sleep(delay * 0.5)
                 continue
+                
+            except aiohttp.ClientConnectionError as e:
+                log_warning(f"{provider} 重试连接错误: {e}")
+                # 连接错误时尝试更长的延迟
+                if retry_count < max_retries - 1:
+                    await asyncio.sleep(delay * 1.5)
+                continue
+                
+            except aiohttp.ClientPayloadError as e:
+                log_warning(f"{provider} 重试载荷错误: {e}")
+                continue
+                
             except Exception as e:
-                log_warning(f"{provider} 重试异常: {e}")
+                log_warning(f"{provider} 重试异常: {type(e).__name__}: {e}")
                 continue
         
-        log_error(f"{provider}最终失败")
+        log_error(f"{provider} 增强重试最终失败")
         return None
     
     def _build_prompt(self, market_data: Dict[str, Any]) -> str:
