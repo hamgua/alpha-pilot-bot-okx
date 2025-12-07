@@ -1506,58 +1506,100 @@ MACD: {macd}
         # 生成详细的信号统计
         signal_statistics = self._generate_detailed_signal_statistics(signals)
 
-        # 增强决策逻辑 - 考虑部分AI失败的情况
-        majority_threshold = 0.6  # 60% majority threshold
-        consensus_threshold = 0.8  # 80% consensus threshold
+        # 🚀 增强决策逻辑 - 减少过度保守倾向
+        majority_threshold = 0.5  # 降低门槛到50%
+        strong_consensus_threshold = 0.7  # 强共识70%
+        weak_consensus_threshold = 0.6   # 弱共识60%
         
         # 计算各信号的占比
         buy_ratio = buy_votes / total_signals
         sell_ratio = sell_votes / total_signals
         hold_ratio = hold_votes / total_signals
 
-        # 确定最终信号 - 增强逻辑
-        if buy_ratio >= consensus_threshold:
+        # 🔥 动态信心调整 - 基于市场条件
+        market_data = market_data or {}
+        technical_data = market_data.get('technical_data', {})
+        
+        # 获取市场状态
+        rsi = float(technical_data.get('rsi', 50))
+        atr_pct = float(technical_data.get('atr_pct', 1.0))
+        trend = str(market_data.get('trend_strength', '震荡'))
+        
+        # 计算动态信心调整因子
+        confidence_adjustment = self._calculate_dynamic_confidence_adjustment(rsi, atr_pct, trend)
+        
+        # 🎯 智能信号融合 - 减少保守倾向
+        if buy_ratio >= strong_consensus_threshold:
             final_signal = 'BUY'
-            confidence = buy_confidence
+            confidence = buy_confidence * confidence_adjustment['buy_multiplier']
             reason = f"强共识买入: {buy_votes}/{total_signals}票支持 ({buy_ratio*100:.0f}%)"
-            log_info(f"🎯 强共识决策: BUY (信心: {confidence:.2f})")
-        elif sell_ratio >= consensus_threshold:
+            log_info(f"🎯 强共识决策: BUY (信心: {confidence:.2f}, 调整因子: {confidence_adjustment['buy_multiplier']:.2f})")
+        elif sell_ratio >= strong_consensus_threshold:
             final_signal = 'SELL'
-            confidence = sell_confidence
+            confidence = sell_confidence * confidence_adjustment['sell_multiplier']
             reason = f"强共识卖出: {sell_votes}/{total_signals}票支持 ({sell_ratio*100:.0f}%)"
-            log_info(f"🎯 强共识决策: SELL (信心: {confidence:.2f})")
-        elif hold_ratio >= consensus_threshold:
-            final_signal = 'HOLD'
-            confidence = hold_confidence
-            reason = f"强共识持仓: {hold_votes}/{total_signals}票支持 ({hold_ratio*100:.0f}%)"
-            log_info(f"🎯 强共识决策: HOLD (信心: {confidence:.2f})")
-        elif buy_ratio >= majority_threshold:
+            log_info(f"🎯 强共识决策: SELL (信心: {confidence:.2f}, 调整因子: {confidence_adjustment['sell_multiplier']:.2f})")
+        elif hold_ratio >= strong_consensus_threshold:
+            # 即使是强HOLD共识，也要考虑是否有交易机会
+            if buy_ratio > 0.2 or sell_ratio > 0.2:  # 如果有明显的买卖分歧
+                # 选择信心更高的方向
+                if buy_confidence > sell_confidence:
+                    final_signal = 'BUY'
+                    confidence = buy_confidence * 0.8  # 降低信心但保持方向
+                    reason = f"HOLD共识中存在买入机会: 选择BUY方向 (信心: {confidence:.2f})"
+                    log_info(f"🎯 智能突破: 从HOLD共识中选择BUY方向 (信心: {confidence:.2f})")
+                else:
+                    final_signal = 'SELL'
+                    confidence = sell_confidence * 0.8
+                    reason = f"HOLD共识中存在卖出机会: 选择SELL方向 (信心: {confidence:.2f})"
+                    log_info(f"🎯 智能突破: 从HOLD共识中选择SELL方向 (信心: {confidence:.2f})")
+            else:
+                final_signal = 'HOLD'
+                confidence = hold_confidence * confidence_adjustment['hold_multiplier']
+                reason = f"强共识持仓: {hold_votes}/{total_signals}票支持 ({hold_ratio*100:.0f}%)"
+                log_info(f"🎯 强共识决策: HOLD (信心: {confidence:.2f}, 调整因子: {confidence_adjustment['hold_multiplier']:.2f})")
+        elif buy_ratio >= weak_consensus_threshold:
             final_signal = 'BUY'
-            confidence = buy_confidence * 0.9  # 降低信心，因为不是强共识
+            confidence = buy_confidence * confidence_adjustment['buy_multiplier'] * 0.95
             reason = f"多数支持买入: {buy_votes}/{total_signals}票支持 ({buy_ratio*100:.0f}%)"
-            log_info(f"🎯 多数决策: BUY (信心: {confidence:.2f})")
-        elif sell_ratio >= majority_threshold:
+            log_info(f"🎯 多数决策: BUY (信心: {confidence:.2f}, 调整因子: {confidence_adjustment['buy_multiplier']:.2f})")
+        elif sell_ratio >= weak_consensus_threshold:
             final_signal = 'SELL'
-            confidence = sell_confidence * 0.9
+            confidence = sell_confidence * confidence_adjustment['sell_multiplier'] * 0.95
             reason = f"多数支持卖出: {sell_votes}/{total_signals}票支持 ({sell_ratio*100:.0f}%)"
-            log_info(f"🎯 多数决策: SELL (信心: {confidence:.2f})")
+            log_info(f"🎯 多数决策: SELL (信心: {confidence:.2f}, 调整因子: {confidence_adjustment['sell_multiplier']:.2f})")
         else:
-            # 没有明显多数，倾向于HOLD
-            final_signal = 'HOLD'
-            confidence = hold_confidence * 1.1  # 轻微提升HOLD信心
-            reason = f"无明显共识，建议观望: HOLD {hold_votes}/{total_signals}票 ({hold_ratio*100:.0f}%)"
-            log_info(f"🎯 保守决策: HOLD (信心: {confidence:.2f})")
+            # 没有明显多数，但减少过度保守
+            if buy_confidence > sell_confidence and buy_confidence > hold_confidence:
+                final_signal = 'BUY'
+                confidence = buy_confidence * 0.7  # 降低但保持方向
+                reason = f"无明显共识但买入信心最高: 选择BUY方向 (信心: {confidence:.2f})"
+                log_info(f"🎯 智能选择: 选择信心最高的BUY方向 (信心: {confidence:.2f})")
+            elif sell_confidence > buy_confidence and sell_confidence > hold_confidence:
+                final_signal = 'SELL'
+                confidence = sell_confidence * 0.7
+                reason = f"无明显共识但卖出信心最高: 选择SELL方向 (信心: {confidence:.2f})"
+                log_info(f"🎯 智能选择: 选择信心最高的SELL方向 (信心: {confidence:.2f})")
+            else:
+                final_signal = 'HOLD'
+                confidence = hold_confidence * confidence_adjustment['hold_multiplier']
+                reason = f"无明显共识，建议观望: HOLD {hold_votes}/{total_signals}票 ({hold_ratio*100:.0f}%)"
+                log_info(f"🎯 保守决策: HOLD (信心: {confidence:.2f}, 调整因子: {confidence_adjustment['hold_multiplier']:.2f})")
 
-        # 基于成功率调整信心 - 关键改进
+        # 基于成功率调整信心 - 但减少过度惩罚
         success_rate = total_signals / total_configured if total_configured > 0 else 1.0
-        if success_rate < 0.5:  # 如果成功率低于50%
-            confidence *= 0.7  # 大幅降低信心
+        if success_rate < 0.3:  # 只有极低成功率才大幅惩罚
+            confidence *= 0.6  # 降低惩罚力度
             reason += f" (AI成功率仅{success_rate*100:.0f}%，降低信心)"
-            log_info(f"⚠️ AI成功率低({success_rate*100:.0f}%)，降低信心至 {confidence:.2f}")
+            log_info(f"⚠️ AI成功率极低({success_rate*100:.0f}%)，降低信心至 {confidence:.2f}")
+        elif success_rate < 0.5:  # 中等成功率轻微惩罚
+            confidence *= 0.85
+            reason += f" (AI成功率{success_rate*100:.0f}%，轻微降低信心)"
+            log_info(f"⚠️ AI成功率较低({success_rate*100:.0f}%)，轻微降低信心至 {confidence:.2f}")
 
-        # 增强信心调整 - 基于共识度
+        # 增强信心调整 - 基于共识度，但设置最小值避免过度压缩
         max_ratio = max(buy_ratio, sell_ratio, hold_ratio)
-        confidence_multiplier = max_ratio
+        confidence_multiplier = max(0.7, max_ratio)  # 设置最小0.7避免过度压缩
         confidence *= confidence_multiplier
         log_info(f"⚖️ 共识度调整: 原始信心 × {confidence_multiplier:.2f} = {confidence:.2f}")
 
@@ -2088,6 +2130,234 @@ MACD: {macd}
         except Exception as e:
             log_error(f"成本效率计算失败: {e}")
             return 0.0
+    
+    def _calculate_dynamic_confidence_adjustment(self, rsi: float, atr_pct: float, trend: str) -> Dict[str, Any]:
+        """计算动态信心调整因子 - 基于市场条件"""
+        try:
+            # 基础调整因子
+            buy_multiplier = 1.0
+            sell_multiplier = 1.0
+            hold_multiplier = 1.0
+            
+            # 1. RSI-based adjustments
+            if rsi < 30:  # 超卖区域 - 增强买入信心，降低卖出信心
+                buy_multiplier *= 1.3
+                sell_multiplier *= 0.7
+                hold_multiplier *= 0.8
+            elif rsi > 70:  # 超买区域 - 增强卖出信心，降低买入信心
+                buy_multiplier *= 0.7
+                sell_multiplier *= 1.3
+                hold_multiplier *= 0.8
+            elif 35 <= rsi <= 65:  # 中性区域 - 保持平衡
+                buy_multiplier *= 1.0
+                sell_multiplier *= 1.0
+                hold_multiplier *= 1.1  # 轻微偏好观望
+            else:  # 轻微超买/超卖
+                if rsi < 40:  # 轻微超卖
+                    buy_multiplier *= 1.1
+                    sell_multiplier *= 0.9
+                else:  # 轻微超买
+                    buy_multiplier *= 0.9
+                    sell_multiplier *= 1.1
+            
+            # 2. 波动率-based adjustments
+            if atr_pct < 0.5:  # 极低波动 - 降低交易信号信心
+                buy_multiplier *= 0.8
+                sell_multiplier *= 0.8
+                hold_multiplier *= 1.2  # 增强观望偏好
+            elif atr_pct < 1.0:  # 低波动 - 轻微降低
+                buy_multiplier *= 0.9
+                sell_multiplier *= 0.9
+                hold_multiplier *= 1.1
+            elif atr_pct > 3.0:  # 高波动 - 增强信号但降低信心
+                buy_multiplier *= 1.1
+                sell_multiplier *= 1.1
+                hold_multiplier *= 0.9
+            elif atr_pct > 2.0:  # 中高波动 - 轻微增强
+                buy_multiplier *= 1.05
+                sell_multiplier *= 1.05
+                hold_multiplier *= 0.95
+            
+            # 3. 趋势-based adjustments
+            trend_lower = str(trend).lower()
+            if 'bullish' in trend_lower or '上涨' in trend_lower:
+                buy_multiplier *= 1.2
+                sell_multiplier *= 0.8
+                hold_multiplier *= 0.9
+            elif 'bearish' in trend_lower or '下跌' in trend_lower:
+                buy_multiplier *= 0.8
+                sell_multiplier *= 1.2
+                hold_multiplier *= 0.9
+            elif '震荡' in trend_lower or 'consolidation' in trend_lower:
+                buy_multiplier *= 0.9
+                sell_multiplier *= 0.9
+                hold_multiplier *= 1.3  # 震荡市强烈偏好观望
+            
+            # 4. 时间-based adjustments (基于交易时段)
+            current_hour = datetime.now().hour
+            if 9 <= current_hour <= 16:  # 亚洲交易时段 - 相对保守
+                buy_multiplier *= 0.95
+                sell_multiplier *= 0.95
+                hold_multiplier *= 1.05
+            elif 21 <= current_hour or current_hour <= 3:  # 欧美交易时段 - 相对积极
+                buy_multiplier *= 1.05
+                sell_multiplier *= 1.05
+                hold_multiplier *= 0.95
+            
+            # 5. 确保调整因子在合理范围内
+            buy_multiplier = max(0.5, min(1.5, buy_multiplier))
+            sell_multiplier = max(0.5, min(1.5, sell_multiplier))
+            hold_multiplier = max(0.5, min(1.5, hold_multiplier))
+            
+            log_info(f"📊 动态信心调整: BUY×{buy_multiplier:.2f}, SELL×{sell_multiplier:.2f}, HOLD×{hold_multiplier:.2f}")
+            log_info(f"📊 调整原因: RSI={rsi:.1f}, ATR={atr_pct:.2f}%, 趋势={trend}")
+            
+            return {
+                'buy_multiplier': buy_multiplier,
+                'sell_multiplier': sell_multiplier,
+                'hold_multiplier': hold_multiplier,
+                'rsi': rsi,
+                'atr_pct': atr_pct,
+                'trend': trend,
+                'adjustment_reason': f"RSI={rsi:.1f}, ATR={atr_pct:.2f}%, 趋势={trend}"
+            }
+            
+        except Exception as e:
+            log_error(f"动态信心调整计算失败: {e}")
+            # 返回中性调整因子
+            return {
+                'buy_multiplier': 1.0,
+                'sell_multiplier': 1.0,
+                'hold_multiplier': 1.0,
+                'rsi': rsi,
+                'atr_pct': atr_pct,
+                'trend': trend,
+                'adjustment_reason': f"计算失败，使用中性因子: {e}"
+            }
+    
+    def _analyze_signal_consistency(self, current_signals: List[AISignal], historical_signals: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """分析信号历史一致性 - 防止信号反复横跳"""
+        try:
+            if not current_signals or not historical_signals:
+                return {
+                    'consistency_score': 1.0,
+                    'trend_stability': 'unknown',
+                    'recommendation': 'insufficient_data',
+                    'analysis': '历史数据不足'
+                }
+            
+            # 获取最近5次信号
+            recent_history = historical_signals[-5:] if len(historical_signals) >= 5 else historical_signals
+            current_signal_type = current_signals[0].signal if current_signals else 'HOLD'
+            
+            # 计算历史一致性得分
+            consistent_signals = sum(1 for h in recent_history if h.get('signal') == current_signal_type)
+            consistency_score = consistent_signals / len(recent_history) if recent_history else 0.0
+            
+            # 分析趋势稳定性
+            if consistency_score >= 0.8:
+                trend_stability = 'very_stable'
+                recommendation = 'maintain_current_signal'
+            elif consistency_score >= 0.6:
+                trend_stability = 'stable'
+                recommendation = 'slight_adjustment_allowed'
+            elif consistency_score >= 0.4:
+                trend_stability = 'moderate'
+                recommendation = 'careful_consideration_needed'
+            else:
+                trend_stability = 'unstable'
+                recommendation = 'high_caution_required'
+            
+            # 计算信号变化频率
+            signal_changes = 0
+            for i in range(1, len(recent_history)):
+                if recent_history[i].get('signal') != recent_history[i-1].get('signal'):
+                    signal_changes += 1
+            
+            change_frequency = signal_changes / (len(recent_history) - 1) if len(recent_history) > 1 else 0.0
+            
+            log_info(f"📈 信号一致性分析: 一致性得分={consistency_score:.2f}, 趋势稳定性={trend_stability}")
+            log_info(f"📈 信号变化频率: {change_frequency:.2f} ({signal_changes}/{len(recent_history)-1}次变化)")
+            
+            return {
+                'consistency_score': consistency_score,
+                'trend_stability': trend_stability,
+                'recommendation': recommendation,
+                'change_frequency': change_frequency,
+                'analysis': f'最近{len(recent_history)}次信号中{consistent_signals}次一致，变化{signal_changes}次'
+            }
+            
+        except Exception as e:
+            log_error(f"信号一致性分析失败: {e}")
+            return {
+                'consistency_score': 0.5,
+                'trend_stability': 'unknown',
+                'recommendation': 'analysis_failed',
+                'error': str(e)
+            }
+    
+    def _optimize_low_volatility_signals(self, signals: List[AISignal], market_data: Dict[str, Any]) -> List[AISignal]:
+        """优化低波动率市场的信号处理"""
+        try:
+            technical_data = market_data.get('technical_data', {})
+            atr_pct = float(technical_data.get('atr_pct', 1.0))
+            
+            # 低波动率阈值
+            low_volatility_threshold = 0.8  # ATR < 0.8% 认为是低波动
+            
+            if atr_pct >= low_volatility_threshold:
+                return signals  # 正常波动，无需特殊处理
+            
+            log_info(f"⚠️ 检测到极低波动率环境 (ATR: {atr_pct:.2f}%)，应用低波动率优化策略")
+            
+            # 低波动率优化策略
+            optimized_signals = []
+            for signal in signals:
+                new_signal = AISignal(
+                    provider=signal.provider,
+                    signal=signal.signal,
+                    confidence=signal.confidence,
+                    reason=signal.reason,
+                    timestamp=signal.timestamp,
+                    raw_response=signal.raw_response
+                )
+                
+                # 策略1: 降低交易信号的信心值
+                if signal.signal in ['BUY', 'SELL']:
+                    new_signal.confidence = max(0.3, signal.confidence * 0.7)  # 降低30%
+                    new_signal.reason = f"[低波动率优化] {signal.reason}"
+                    log_info(f"🔄 {signal.provider} 低波动率调整: 信心从{signal.confidence:.2f}降至{new_signal.confidence:.2f}")
+                
+                # 策略2: 增强超卖/超买信号
+                rsi = float(technical_data.get('rsi', 50))
+                if (signal.signal == 'BUY' and rsi < 35) or (signal.signal == 'SELL' and rsi > 65):
+                    # 在极端区域，适当恢复部分信心
+                    new_signal.confidence = min(0.8, new_signal.confidence * 1.2)
+                    new_signal.reason = f"[低波动率+极端RSI优化] {signal.reason}"
+                    log_info(f"🔄 {signal.provider} 极端RSI补偿: 信心调整至{new_signal.confidence:.2f}")
+                
+                # 策略3: 震荡市区间交易策略
+                price_history = market_data.get('price_history', [])
+                if len(price_history) >= 20:
+                    recent_prices = price_history[-20:]
+                    price_range = max(recent_prices) - min(recent_prices)
+                    avg_price = sum(recent_prices) / len(recent_prices)
+                    price_position = (avg_price - min(recent_prices)) / price_range if price_range > 0 else 0.5
+                    
+                    # 在区间边界附近，增强信号
+                    if (signal.signal == 'BUY' and price_position < 0.3) or \
+                       (signal.signal == 'SELL' and price_position > 0.7):
+                        new_signal.confidence = min(0.85, new_signal.confidence * 1.15)
+                        new_signal.reason = f"[低波动率+区间边界优化] {signal.reason}"
+                        log_info(f"🔄 {signal.provider} 区间边界增强: 信心调整至{new_signal.confidence:.2f}")
+                
+                optimized_signals.append(new_signal)
+            
+            return optimized_signals
+            
+        except Exception as e:
+            log_error(f"低波动率信号优化失败: {e}")
+            return signals  # 出错时返回原始信号
 
 # 全局AI客户端实例
 ai_client = AIClient()

@@ -458,10 +458,20 @@ class AlphaArenaBot:
             )
             
             if signals:
+                # 使用增强的信号融合算法
                 signal_data = ai_client.fuse_signals(signals)
                 log_info("📊 【多AI融合信号分析】")
                 log_info(f"   📈 最终信号: {signal_data['signal']}")
                 log_info(f"   💡 融合信心: {signal_data['confidence']:.1f}")
+                
+                # 显示详细的融合分析信息
+                fusion_analysis = signal_data.get('fusion_analysis', {})
+                if fusion_analysis:
+                    log_info(f"   🔍 融合详情:")
+                    log_info(f"      共识门槛: {fusion_analysis.get('consensus_threshold', 'unknown')}")
+                    log_info(f"      动态调整: {fusion_analysis.get('dynamic_adjustment', 0):+.2f}")
+                    log_info(f"      一致性得分: {fusion_analysis.get('consistency_score', 0):.2f}")
+                    log_info(f"      低波动优化: {'✅' if fusion_analysis.get('low_volatility_optimized') else '❌'}")
                 
                 # 保存AI信号到数据管理系统
                 self.data_manager.save_ai_signal(signal_data)
@@ -519,20 +529,185 @@ class AlphaArenaBot:
         
     def _get_fallback_signal_sync(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """获取同步回退信号（增强版）"""
-        # 检查是否有历史信号可用
-        history = memory_manager.get_history('signals', limit=10)
-        
-        if history:
-            # 使用最近的有效信号，降低信心
-            last_signal = history[-1]
-            fallback_signal = last_signal.copy()
-            fallback_signal['confidence'] = max(0.3, fallback_signal.get('confidence', 0.5) * 0.7)
-            fallback_signal['reason'] = f"回退信号: {fallback_signal.get('reason', '历史信号')}"
-            fallback_signal['timestamp'] = datetime.now().isoformat()
-            return fallback_signal
-        
-        # 最终回退：基于简单技术分析
-        return self._create_fallback_signal(market_data)
+        try:
+            # 1. 首先检查是否有历史信号可用
+            history = memory_manager.get_history('signals', limit=10)
+            
+            if history:
+                # 分析历史信号的一致性和质量
+                recent_signals = history[-5:]  # 最近5个信号
+                signal_counts = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
+                total_confidence = 0
+                
+                for sig in recent_signals:
+                    signal = sig.get('signal', 'HOLD')
+                    confidence = sig.get('confidence', 0.5)
+                    signal_counts[signal] += 1
+                    total_confidence += confidence
+                
+                avg_confidence = total_confidence / len(recent_signals)
+                dominant_signal = max(signal_counts, key=signal_counts.get)
+                
+                # 如果历史信号有明确共识，使用它
+                if signal_counts[dominant_signal] >= 3:  # 至少3个相同信号
+                    fallback_signal = {
+                        'signal': dominant_signal,
+                        'confidence': max(0.4, avg_confidence * 0.6),  # 降低信心但保持合理水平
+                        'reason': f"智能回退信号: 基于{len(recent_signals)}个历史信号的{dominant_signal}共识",
+                        'timestamp': datetime.now().isoformat(),
+                        'fallback_type': 'historical_consensus',
+                        'historical_analysis': {
+                            'signal_distribution': signal_counts,
+                            'avg_confidence': avg_confidence,
+                            'consensus_strength': signal_counts[dominant_signal] / len(recent_signals)
+                        }
+                    }
+                    log_info(f"📊 使用历史信号共识回退: {dominant_signal} ({signal_counts[dominant_signal]}/{len(recent_signals)})")
+                    return fallback_signal
+            
+            # 2. 基于技术指标生成智能回退信号
+            return self._create_intelligent_fallback_signal(market_data)
+            
+        except Exception as e:
+            log_error(f"增强回退信号生成失败: {e}")
+            # 最终回退：基于简单技术分析
+            return self._create_fallback_signal(market_data)
+    
+    def _create_intelligent_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """创建基于技术指标的智能回退信号"""
+        try:
+            current_price = market_data.get('price', 0)
+            if current_price <= 0:
+                return self._create_fallback_signal(market_data)
+            
+            # 获取价格历史数据
+            price_history = self._get_price_history_for_analysis()
+            closes = price_history.get('close', [])
+            
+            if len(closes) < 6:
+                # 数据不足，使用简单趋势分析
+                return self._create_trend_based_fallback(current_price, closes)
+            
+            # 计算关键技术指标
+            technical_signals = {}
+            
+            # RSI信号
+            rsi = self._calculate_rsi(closes, 14)
+            if rsi > 70:
+                technical_signals['rsi'] = 'SELL'
+            elif rsi < 30:
+                technical_signals['rsi'] = 'BUY'
+            else:
+                technical_signals['rsi'] = 'HOLD'
+            
+            # 均线信号
+            ma_data = self._calculate_ma_status(closes)
+            ma_trend = ma_data.get('ma_trend', 'N/A')
+            if ma_trend == '多头排列':
+                technical_signals['ma'] = 'BUY'
+            elif ma_trend == '空头排列':
+                technical_signals['ma'] = 'SELL'
+            else:
+                technical_signals['ma'] = 'HOLD'
+            
+            # 价格位置信号
+            ma_position = ma_data.get('ma_position', 'N/A')
+            if ma_position == '均线上方':
+                technical_signals['position'] = 'BUY'
+            elif ma_position == '均线下方':
+                technical_signals['position'] = 'SELL'
+            else:
+                technical_signals['position'] = 'HOLD'
+            
+            # 趋势强度
+            trend_strength = self._analyze_simple_trend()
+            if trend_strength > 0.3:
+                technical_signals['trend'] = 'BUY'
+            elif trend_strength < -0.3:
+                technical_signals['trend'] = 'SELL'
+            else:
+                technical_signals['trend'] = 'HOLD'
+            
+            # 统计技术信号
+            signal_counts = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
+            for signal in technical_signals.values():
+                signal_counts[signal] += 1
+            
+            # 确定最终信号
+            if signal_counts['BUY'] >= 2:
+                final_signal = 'BUY'
+                confidence = 0.5 + (signal_counts['BUY'] - 2) * 0.1  # 0.5-0.7
+                reason = f"技术指标回退: {signal_counts['BUY']}个买入信号 (RSI:{technical_signals['rsi']}, MA:{technical_signals['ma']}, 位置:{technical_signals['position']}, 趋势:{technical_signals['trend']})"
+            elif signal_counts['SELL'] >= 2:
+                final_signal = 'SELL'
+                confidence = 0.5 + (signal_counts['SELL'] - 2) * 0.1  # 0.5-0.7
+                reason = f"技术指标回退: {signal_counts['SELL']}个卖出信号 (RSI:{technical_signals['rsi']}, MA:{technical_signals['ma']}, 位置:{technical_signals['position']}, 趋势:{technical_signals['trend']})"
+            else:
+                final_signal = 'HOLD'
+                confidence = 0.6  # HOLD信号保持中等信心
+                reason = f"技术指标回退: 信号分歧，建议观望 (RSI:{technical_signals['rsi']}, MA:{technical_signals['ma']}, 位置:{technical_signals['position']}, 趋势:{technical_signals['trend']})"
+            
+            intelligent_signal = {
+                'signal': final_signal,
+                'confidence': min(0.8, confidence),  # 最大信心0.8
+                'reason': reason,
+                'timestamp': datetime.now().isoformat(),
+                'fallback_type': 'intelligent_technical',
+                'technical_analysis': {
+                    'rsi': rsi,
+                    'ma_trend': ma_trend,
+                    'ma_position': ma_position,
+                    'trend_strength': trend_strength,
+                    'signal_breakdown': technical_signals,
+                    'signal_counts': signal_counts
+                }
+            }
+            
+            log_info(f"📊 使用智能技术回退信号: {final_signal} (信心: {confidence:.2f})")
+            return intelligent_signal
+            
+        except Exception as e:
+            log_error(f"智能回退信号生成失败: {e}")
+            return self._create_fallback_signal(market_data)
+    
+    def _create_trend_based_fallback(self, current_price: float, price_history: list) -> Dict[str, Any]:
+        """基于简单趋势的回退信号"""
+        try:
+            if len(price_history) >= 3:
+                # 简单趋势判断
+                recent_trend = (current_price - price_history[-3]) / price_history[-3]
+                
+                if recent_trend > 0.02:  # 上涨超过2%
+                    signal = 'BUY'
+                    confidence = 0.4 + min(0.3, abs(recent_trend) * 10)  # 0.4-0.7
+                    reason = f"趋势回退: 近期价格上涨{recent_trend:.2%}"
+                elif recent_trend < -0.02:  # 下跌超过2%
+                    signal = 'SELL'
+                    confidence = 0.4 + min(0.3, abs(recent_trend) * 10)  # 0.4-0.7
+                    reason = f"趋势回退: 近期价格下跌{recent_trend:.2%}"
+                else:
+                    signal = 'HOLD'
+                    confidence = 0.5
+                    reason = f"趋势回退: 近期价格震荡{recent_trend:.2%}，建议观望"
+            else:
+                signal = 'HOLD'
+                confidence = 0.4
+                reason = "趋势回退: 数据不足，保守观望"
+            
+            return {
+                'signal': signal,
+                'confidence': confidence,
+                'reason': reason,
+                'timestamp': datetime.now().isoformat(),
+                'fallback_type': 'simple_trend',
+                'trend_analysis': {
+                    'recent_change': recent_trend if len(price_history) >= 3 else 0
+                }
+            }
+            
+        except Exception as e:
+            log_error(f"趋势回退信号生成失败: {e}")
+            return self._create_fallback_signal({'price': current_price})
     
     def _should_refresh_signal(self) -> bool:
         """判断是否需要刷新信号"""
