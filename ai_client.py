@@ -316,6 +316,190 @@ class AIClient:
             log_error(f"{provider} 完整堆栈:\n{traceback.format_exc()}")
             return None
     
+    def generate_fallback_signal(self, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """生成智能回退信号 - 基于技术指标"""
+        try:
+            log_info("📊 使用智能技术回退信号")
+            
+            # 获取技术指标
+            technical_data = market_data.get('technical_data', {})
+            rsi = float(technical_data.get('rsi', 50))
+            macd = technical_data.get('macd', 'HOLD')
+            ma_status = technical_data.get('ma_status', 'HOLD')
+            
+            # 获取趋势分析
+            trend_analysis = market_data.get('trend_analysis', {})
+            overall_trend = trend_analysis.get('overall', 'neutral')
+            
+            # 计算信号权重
+            buy_signals = 0
+            sell_signals = 0
+            hold_signals = 0
+            
+            # RSI信号
+            if rsi < 30:
+                buy_signals += 1
+                log_info(f"   RSI买入信号: {rsi:.1f}")
+            elif rsi > 70:
+                sell_signals += 1
+                log_info(f"   RSI卖出信号: {rsi:.1f}")
+            else:
+                hold_signals += 1
+                log_info(f"   RSI持有信号: {rsi:.1f}")
+            
+            # MACD信号
+            if macd == 'BUY':
+                buy_signals += 1
+                log_info(f"   MACD买入信号")
+            elif macd == 'SELL':
+                sell_signals += 1
+                log_info(f"   MACD卖出信号")
+            else:
+                hold_signals += 1
+                log_info(f"   MACD持有信号")
+            
+            # 均线信号
+            if ma_status == 'BUY':
+                buy_signals += 1
+                log_info(f"   均线买入信号")
+            elif ma_status == 'SELL':
+                sell_signals += 1
+                log_info(f"   均线卖出信号")
+            else:
+                hold_signals += 1
+                log_info(f"   均线持有信号")
+            
+            # 趋势信号
+            if overall_trend == 'up':
+                buy_signals += 1
+                log_info(f"   趋势向上信号")
+            elif overall_trend == 'down':
+                sell_signals += 1
+                log_info(f"   趋势向下信号")
+            else:
+                hold_signals += 1
+                log_info(f"   趋势中性信号")
+            
+            # 确定最终信号
+            if buy_signals > sell_signals and buy_signals > hold_signals:
+                final_signal = 'BUY'
+                confidence = 0.50 + (buy_signals / 4) * 0.3  # 0.5-0.8
+            elif sell_signals > buy_signals and sell_signals > hold_signals:
+                final_signal = 'SELL'
+                confidence = 0.50 + (sell_signals / 4) * 0.3  # 0.5-0.8
+            else:
+                final_signal = 'HOLD'
+                confidence = 0.50 + (hold_signals / 4) * 0.3  # 0.5-0.8
+            
+            # 确保信心度在合理范围内
+            confidence = max(0.3, min(0.9, confidence))
+            
+            # 构建建议文本
+            suggestions = []
+            if rsi < 30:
+                suggestions.append(f"RSI:{final_signal}")
+            elif rsi > 70:
+                suggestions.append(f"RSI:{final_signal}")
+            else:
+                suggestions.append(f"RSI:HOLD")
+            
+            suggestions.append(f"MACD:{macd}")
+            suggestions.append(f"MA:{ma_status}")
+            suggestions.append(f"位置:{final_signal}")
+            suggestions.append(f"趋势:{'HOLD' if overall_trend == 'neutral' else overall_trend.upper()}")
+            
+            advice = "技术指标回退: " + ", ".join(suggestions)
+            
+            log_info(f"📊 使用智能技术回退信号: {final_signal} (信心: {confidence:.2f})")
+            
+            return {
+                'signal': final_signal,
+                'confidence': confidence,
+                'reason': advice,
+                'provider': 'technical_fallback',
+                'is_fallback': True
+            }
+            
+        except Exception as e:
+            log_error(f"回退信号生成失败: {e}")
+            # 返回默认的保守信号
+            return {
+                'signal': 'HOLD',
+                'confidence': 0.3,
+                'reason': '回退信号生成异常，使用保守持有',
+                'provider': 'error_fallback',
+                'is_fallback': True
+            }
+    
+    async def _retry_provider_request(self, provider: str, prompt: str, timeout: float, session: aiohttp.ClientSession) -> Optional[Dict[str, Any]]:
+        """重试失败的AI提供商请求"""
+        config = self.provider_configs.get(provider)
+        if not config:
+            return None
+            
+        # 指数退避延迟
+        retry_delays = [2.4, 4.8, 9.6]  # 递增的延迟时间
+        max_retries = min(len(retry_delays), 1)  # 只重试1次，避免过多请求成本
+        
+        for retry_count in range(max_retries):
+            delay = retry_delays[retry_count]
+            log_info(f"⏰ {provider} 指数退避: 第{retry_count}次重试，延迟{delay}秒")
+            
+            await asyncio.sleep(delay)
+            
+            # 更新重试成本
+            cost = self.provider_costs.get(provider, 0)
+            new_cost = cost + (retry_count + 1) * 0.6  # 每次重试增加0.6成本
+            self.provider_costs[provider] = new_cost
+            log_info(f"💰 重试成本更新: {provider} +{(retry_count + 1) * 0.6}, 当前总计: {new_cost}")
+            
+            try:
+                # 构建请求
+                headers = {
+                    'Authorization': f'Bearer {config["api_key"]}',
+                    'Content-Type': 'application/json'
+                }
+                
+                payload = {
+                    'model': config['model'],
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'temperature': config['temperature'],
+                    'max_tokens': config.get('max_tokens', 150),
+                    'top_p': config.get('top_p', 0.9)
+                }
+                
+                # 发送重试请求
+                async with session.post(
+                    config['url'],
+                    headers=headers,
+                    json=payload,
+                    ssl=False,
+                    timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as response:
+                    
+                    if response.status == 200:
+                        try:
+                            data = await response.json()
+                            log_info(f"✅ {provider} 重试成功")
+                            return data
+                        except Exception as e:
+                            log_error(f"{provider} 重试响应解析失败: {e}")
+                            continue
+                    else:
+                        error_text = await response.text()
+                        log_warning(f"{provider} 重试失败: {response.status} - {error_text}")
+                        continue
+                        
+            except asyncio.TimeoutError:
+                log_warning(f"{provider} 重试超时")
+                continue
+            except Exception as e:
+                log_warning(f"{provider} 重试异常: {e}")
+                continue
+        
+        log_error(f"{provider}最终失败")
+        return None
+    
     def _build_prompt(self, market_data: Dict[str, Any]) -> str:
         """构建AI提示词（基础版本）"""
         return self._build_enhanced_prompt('default', market_data)

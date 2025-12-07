@@ -2360,19 +2360,28 @@ class StrategyBehaviorHandler:
             if not position or position.get('size', 0) == 0:
                 final_size = min(final_size, initial_size)
             
+            # OKX合约标准化：必须是lot size的整数倍
+            lot_size = 0.01  # OKX BTC-USDT-SWAP的lot size
+            final_size = (final_size // lot_size) * lot_size
+            
+            # 确保最小订单大小
+            if final_size < min_size:
+                final_size = min_size
+            
             return final_size
             
         except Exception as e:
             log_error(f"订单大小计算异常: {e}")
             return 0.001  # 默认订单大小
     
-    def _calculate_tp_sl(self, signal: str, current_price: float, market_data: Dict[str, Any]) -> Dict[str, float]:
+    def _calculate_tp_sl(self, signal: str, current_price: float, market_data: Dict[str, Any], strategy_config: Dict[str, Any] = None) -> Dict[str, float]:
         """计算止盈止损"""
         try:
             # 获取策略配置
-            from strategies import StrategySelector
-            selector = StrategySelector()
-            strategy_config = selector.get_strategy_config()
+            if strategy_config is None:
+                from strategies import StrategySelector
+                selector = StrategySelector()
+                strategy_config = selector.get_strategy_config()
             
             # 基础止盈止损百分比
             take_profit_pct = strategy_config.get('take_profit_pct', 0.04)
