@@ -1518,7 +1518,7 @@ class TradingEngine:
             position['size']
         )
     
-    def close_position(self, side: str, amount: float) -> bool:
+    def close_position(self, amount: float) -> bool:
         """平仓操作 - 超级增强版，专门处理0.025等复杂情况"""
         if config.get('trading', 'test_mode'):
             log_info(f"🧪 模拟平仓: {side} 方向 {amount} 张")

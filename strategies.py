@@ -1766,7 +1766,7 @@ class StrategyBehaviorHandler:
         if hasattr(self.trading_engine, 'close_position'):
             try:
                 # 修复：close_position 方法只需要一个参数 - amount
-                return self.trading_engine.close_position(size)
+                return self.trading_engine.close_position(amount=size)
             except:
                 pass
         # 模拟平仓
@@ -1789,7 +1789,7 @@ class StrategyBehaviorHandler:
         if hasattr(self.trading_engine, 'close_position'):
             try:
                 # 修复：close_position 方法只需要一个参数 - amount
-                return self.trading_engine.close_position(close_size)
+                return self.trading_engine.close_position(amount=close_size)
             except:
                 pass
         # 模拟部分平仓
@@ -2305,7 +2305,7 @@ class StrategyBehaviorHandler:
                 return False
             
             # 执行平仓
-            success = self.trading_engine.close_position(side, size)
+            success = self.trading_engine.close_position(amount=size)
             
             if success:
                 log_info(f"✅ 平仓成功: {reason}")
