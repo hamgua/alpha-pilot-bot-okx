@@ -2196,6 +2196,19 @@ MACD: {macd}
             # 提供商性能排名
             provider_rankings = self._rank_provider_performance()
             
+            # 🔧 新增4个关键字段计算
+            # 1. 共识门槛 - 基于成功信号比例
+            consensus_threshold = self._calculate_consensus_threshold(successful_providers, total_configured)
+            
+            # 2. 动态调整因子 - 基于市场条件和成功率
+            dynamic_adjustment = self._calculate_dynamic_adjustment_factor(success_rate, historical_trend)
+            
+            # 3. 一致性得分 - 基于提供商性能一致性
+            consistency_score = self._calculate_consistency_score(provider_rankings)
+            
+            # 4. 低波动优化标志 - 检测是否应用了低波动优化
+            low_volatility_optimized = self._check_low_volatility_optimization()
+            
             return {
                 'total_providers': total_configured,
                 'successful_providers': successful_providers,
@@ -2208,7 +2221,12 @@ MACD: {macd}
                 'historical_trend': historical_trend,
                 'provider_rankings': provider_rankings,
                 'timestamp': datetime.now().isoformat(),
-                'cost_efficiency': self._calculate_cost_efficiency(successful_providers, total_configured)
+                'cost_efficiency': self._calculate_cost_efficiency(successful_providers, total_configured),
+                # 🔧 新增4个关键字段
+                'consensus_threshold': consensus_threshold,
+                'dynamic_adjustment': dynamic_adjustment,
+                'consistency_score': consistency_score,
+                'low_volatility_optimized': low_volatility_optimized
             }
             
         except Exception as e:
@@ -2219,7 +2237,12 @@ MACD: {macd}
                 'failed_providers': total_configured - successful_providers,
                 'success_rate': success_rate if 'success_rate' in locals() else 0.0,
                 'fusion_reason': fusion_reason,
-                'error': str(e)
+                'error': str(e),
+                # 🔧 出错时提供默认值
+                'consensus_threshold': 'unknown',
+                'dynamic_adjustment': 0.0,
+                'consistency_score': 0.0,
+                'low_volatility_optimized': False
             }
     
     def _generate_detailed_signal_statistics(self, signals: List[AISignal]) -> Dict[str, Any]:
@@ -2686,6 +2709,175 @@ MACD: {macd}
         except Exception as e:
             log_error(f"低波动率信号优化失败: {e}")
             return signals  # 出错时返回原始信号
+
+    def _calculate_consensus_threshold(self, successful_providers: int, total_configured: int) -> str:
+        """计算共识门槛"""
+        try:
+            if total_configured == 0:
+                return "unknown"
+            
+            success_ratio = successful_providers / total_configured
+            
+            if success_ratio >= 0.8:
+                return "high_consensus"
+            elif success_ratio >= 0.6:
+                return "medium_consensus"
+            elif success_ratio >= 0.4:
+                return "low_consensus"
+            else:
+                return "minimal_consensus"
+                
+        except Exception as e:
+            log_error(f"共识门槛计算失败: {e}")
+            return "unknown"
+    
+    def _calculate_dynamic_adjustment_factor(self, success_rate: float, historical_trend: Dict[str, Any]) -> float:
+        """计算动态调整因子"""
+        try:
+            # 基础调整因子
+            base_adjustment = 0.0
+            
+            # 基于成功率调整
+            if success_rate >= 0.9:
+                base_adjustment += 0.15  # 高成功率，正向调整
+            elif success_rate >= 0.7:
+                base_adjustment += 0.10  # 中等成功率，轻微正向调整
+            elif success_rate >= 0.5:
+                base_adjustment += 0.05  # 一般成功率，轻微正向调整
+            elif success_rate >= 0.3:
+                base_adjustment -= 0.10  # 低成功率，负向调整
+            else:
+                base_adjustment -= 0.20  # 极低成功率，大幅负向调整
+            
+            # 基于历史趋势调整
+            trend_direction = historical_trend.get('trend_direction', 'stable')
+            if trend_direction == 'improving':
+                base_adjustment += 0.08  # 趋势改善，正向调整
+            elif trend_direction == 'declining':
+                base_adjustment -= 0.12  # 趋势恶化，负向调整
+            # stable趋势不做额外调整
+            
+            # 基于提供商性能一致性调整
+            provider_trends = historical_trend.get('provider_trends', [])
+            if provider_trends:
+                success_rates = [p['success_rate'] for p in provider_trends]
+                if len(success_rates) > 1:
+                    # 计算成功率的标准差
+                    mean_rate = sum(success_rates) / len(success_rates)
+                    variance = sum((r - mean_rate) ** 2 for r in success_rates) / len(success_rates)
+                    std_dev = variance ** 0.5
+                    
+                    # 一致性高（标准差小）则正向调整
+                    if std_dev < 0.1:
+                        base_adjustment += 0.05
+                    # 一致性低（标准差大）则负向调整
+                    elif std_dev > 0.2:
+                        base_adjustment -= 0.08
+            
+            # 确保调整因子在合理范围内
+            return max(-0.50, min(0.50, base_adjustment))
+            
+        except Exception as e:
+            log_error(f"动态调整因子计算失败: {e}")
+            return 0.0
+    
+    def _calculate_consistency_score(self, provider_rankings: List[Dict[str, Any]]) -> float:
+        """计算一致性得分"""
+        try:
+            # 如果提供商排名数据不足，使用超时统计数据作为备选
+            if not provider_rankings or len(provider_rankings) < 2:
+                # 使用超时统计数据计算一致性
+                provider_stats = self.timeout_stats['provider']
+                if not provider_stats:
+                    return 0.5  # 默认值
+                
+                # 提取成功率数据
+                success_rates = [stats['success_rate'] for stats in provider_stats.values()
+                               if stats.get('success_rate', 0) > 0]
+                
+                if len(success_rates) < 2:
+                    # 只有一个或没有提供商数据，返回基础一致性得分
+                    return success_rates[0] if success_rates else 0.5
+            
+            # 提取成功率数据
+            success_rates = [ranking['success_rate'] for ranking in provider_rankings]
+            
+            if not success_rates:
+                return 0.5
+            
+            # 计算成功率的一致性
+            mean_rate = sum(success_rates) / len(success_rates)
+            
+            if len(success_rates) == 1:
+                return success_rates[0]  # 只有一个提供商时，返回其成功率
+            
+            # 计算标准差
+            variance = sum((rate - mean_rate) ** 2 for rate in success_rates) / len(success_rates)
+            std_dev = variance ** 0.5
+            
+            # 计算一致性得分 (1.0 = 完全一致，0.0 = 完全不一致)
+            # 使用标准差的倒数关系，标准差越小，一致性越高
+            max_possible_std = 0.5  # 假设最大可能标准差为0.5
+            consistency_score = max(0.0, 1.0 - (std_dev / max_possible_std))
+            
+            # 基于平均成功率调整最终得分
+            consistency_score = consistency_score * mean_rate
+            
+            # 确保得分在合理范围内，避免极端值
+            final_score = min(0.95, max(0.05, consistency_score))
+            
+            log_info(f"📊 一致性得分计算: 成功率={success_rates}, 均值={mean_rate:.2f}, 标准差={std_dev:.2f}, 最终得分={final_score:.2f}")
+            
+            return final_score
+            
+        except Exception as e:
+            log_error(f"一致性得分计算失败: {e}")
+            return 0.5  # 出错时返回中等默认值
+    
+    def _check_low_volatility_optimization(self) -> bool:
+        """检查是否应用了低波动优化"""
+        try:
+            # 检查是否在最近的交易中应用了低波动优化
+            # 这里可以基于历史记录或当前市场状态判断
+            
+            # 获取当前市场数据（简化版本）
+            # 实际应用中应该从市场数据中获取ATR等指标
+            
+            # 基于最近的交易记录判断
+            # 这里使用一个简化的逻辑：检查是否在最近的交易中降低了交易信号信心
+            
+            # 由于我们没有直接访问当前市场数据的途径，我们基于提供商的超时统计来间接判断
+            # 如果提供商响应时间普遍较长，可能表明市场波动较低（交易不活跃）
+            
+            provider_stats = self.timeout_stats['provider']
+            if not provider_stats:
+                return False
+            
+            # 计算平均响应时间
+            response_times = [stats['avg_response_time'] for stats in provider_stats.values()
+                            if stats['avg_response_time'] > 0]
+            
+            if not response_times:
+                return False
+            
+            avg_response_time = sum(response_times) / len(response_times)
+            
+            # 如果平均响应时间超过某个阈值，认为可能处于低波动环境
+            # 这个阈值需要根据实际经验调整
+            low_volatility_threshold = 8.0  # 8秒
+            
+            is_low_volatility = avg_response_time > low_volatility_threshold
+            
+            if is_low_volatility:
+                log_info(f"📊 低波动优化检测: 平均响应时间{avg_response_time:.1f}s > 阈值{low_volatility_threshold}s，启用低波动优化")
+            else:
+                log_info(f"📊 低波动优化检测: 平均响应时间{avg_response_time:.1f}s ≤ 阈值{low_volatility_threshold}s，正常波动")
+            
+            return is_low_volatility
+            
+        except Exception as e:
+            log_error(f"低波动优化检测失败: {e}")
+            return False
 
 # 全局AI客户端实例
 ai_client = AIClient()

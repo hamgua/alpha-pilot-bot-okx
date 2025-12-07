@@ -530,7 +530,8 @@ class AlphaArenaBot:
             
             # 1. 首先尝试使用新的增强兜底引擎
             try:
-                from fallback_strategies import generate_enhanced_fallback_signal
+                # 从strategies模块导入增强兜底功能
+                from strategies import generate_enhanced_fallback_signal
                 
                 # 获取AI信号历史用于兜底分析
                 signal_history = memory_manager.get_history('signals', limit=20)

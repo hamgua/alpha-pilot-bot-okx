@@ -1518,16 +1518,21 @@ class TradingEngine:
             position['size']
         )
     
-    def close_position(self, amount: float) -> bool:
+    def close_position(self, amount: float, side: str = None) -> bool:
         """平仓操作 - 超级增强版，专门处理0.025等复杂情况"""
         if config.get('trading', 'test_mode'):
-            log_info(f"🧪 模拟平仓: {side} 方向 {amount} 张")
+            log_info(f"🧪 模拟平仓: {side or 'auto'} 方向 {amount} 张")
             return True
             
         try:
             # 详细的平仓前验证
             current_position = self.exchange_manager.get_position()
             log_info(f"📊 【平仓前验证】")
+            
+            # 如果没有提供side，从当前持仓自动获取
+            if side is None and current_position:
+                side = current_position['side']
+            
             log_info(f"   请求平仓方向: {side}")
             log_info(f"   请求平仓数量: {amount}")
             
@@ -1537,10 +1542,11 @@ class TradingEngine:
                 
             log_info(f"   当前持仓方向: {current_position['side']}")
             log_info(f"   当前持仓大小: {current_position['size']}")
-            log_info(f"   方向匹配检查: {current_position['side']} == {side} -> {current_position['side'] == side}")
+            if side:
+                log_info(f"   方向匹配检查: {current_position['side']} == {side} -> {current_position['side'] == side}")
             
             # 验证持仓方向
-            if current_position['side'] != side:
+            if side and current_position['side'] != side:
                 log_info("   ⚠️ 方向不匹配，无需平仓")
                 return True
                 
@@ -1575,6 +1581,9 @@ class TradingEngine:
                 log_warning(f"⚠️ 最终平仓数量为0，跳过平仓")
                 return True
             
+            if not side:
+                side = current_position['side']
+            
             close_side = 'sell' if side == 'long' else 'buy'
             log_info(f"📊 【平仓执行】")
             log_info(f"   平仓方向: {close_side}")
@@ -1585,10 +1594,10 @@ class TradingEngine:
             success = self.order_manager.place_market_order(close_side, final_amount, reduce_only=True)
             
             if success:
-                log_info(f"✅ 平仓成功: {side} 方向 {final_amount} 张")
+                log_info(f"✅ 平仓成功: {side or 'auto'} 方向 {final_amount} 张")
                 return True
             else:
-                log_error(f"❌ 平仓失败: {side} 方向 {final_amount} 张")
+                log_error(f"❌ 平仓失败: {side or 'auto'} 方向 {final_amount} 张")
                 
                 # 尝试降级策略 - 使用稍小的数量
                 fallback_amount = final_amount * 0.99  # 减少1%
