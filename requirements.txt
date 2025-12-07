@@ -11,3 +11,11 @@ numpy
 aiohttp
 nest-asyncio
 psutil
+beautifulsoup4
+textblob
+scikit-learn
+tensorflow
+optuna
+joblib
+pytest
+typing-extensions
