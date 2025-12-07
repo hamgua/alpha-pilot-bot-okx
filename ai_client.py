@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from config import config
 from utils import log_info, log_warning, log_error
-from fallback_strategies import generate_enhanced_fallback_signal
+from strategies import generate_enhanced_fallback_signal
 
 @dataclass
 class AISignal:

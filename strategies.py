@@ -3029,3 +3029,1146 @@ def quick_strategy_test():
 if __name__ == "__main__":
     # 运行演示
     run_strategy_demo()
+
+
+# =============================================================================
+# 增强兜底策略模块 - 从fallback_strategies.py合并
+# =============================================================================
+
+from enum import Enum
+from collections import deque
+import asyncio
+
+class FallbackSignalType(Enum):
+    """兜底信号类型"""
+    HISTORICAL_CONSENSUS = "historical_consensus"
+    TECHNICAL_INDICATORS = "technical_indicators"
+    MARKET_ENVIRONMENT = "market_environment"
+    MULTI_TIMEFRAME = "multi_timeframe"
+    PATTERN_RECOGNITION = "pattern_recognition"
+    VOLATILITY_BASED = "volatility_based"
+    FINAL_BACKUP = "final_backup"
+
+@dataclass
+class FallbackSignal:
+    """兜底信号数据结构"""
+    signal: str  # BUY, SELL, HOLD
+    confidence: float  # 0.0-1.0
+    reason: str
+    signal_type: FallbackSignalType
+    timestamp: str
+    quality_score: float  # 信号质量评分
+    market_context: Dict[str, Any]
+    reliability_factors: List[str]  # 可靠性因子列表
+
+class EnhancedFallbackEngine:
+    """增强兜底引擎 - 处理AI信号完全丢失的极端情况"""
+    
+    def __init__(self):
+        self.signal_history = deque(maxlen=100)  # 保存最近100个信号
+        self.market_data_cache = {}  # 市场数据缓存
+        self.fallback_config = {
+            'min_historical_signals': 5,  # 历史共识最小信号数
+            'max_signal_age_minutes': 120,  # 信号最大有效期（分钟）
+            'min_confidence_threshold': 0.3,  # 最小信心阈值
+            'quality_score_threshold': 0.6,  # 质量评分阈值
+            'emergency_hold_confidence': 0.4,  # 紧急持有信号信心
+            'pattern_recognition_enabled': True,
+            'multi_timeframe_enabled': True,
+            'volatility_adjustment_enabled': True
+        }
+        
+        log_info("🛡️ 增强兜底引擎初始化完成")
+    
+    async def generate_fallback_signal(self, market_data: Dict[str, Any],
+                                     signal_history: List[Dict[str, Any]] = None) -> FallbackSignal:
+        """
+        生成增强兜底信号 - 主入口函数
+        按照优先级顺序尝试不同的兜底策略
+        """
+        try:
+            log_info("🛡️ 启动增强兜底信号生成流程...")
+            
+            # 1. 历史信号共识兜底（最高优先级）
+            historical_signal = await self._generate_historical_consensus_signal(signal_history)
+            if historical_signal and historical_signal.quality_score >= self.fallback_config['quality_score_threshold']:
+                log_info(f"✅ 使用历史共识兜底信号: {historical_signal.signal} (质量: {historical_signal.quality_score:.2f})")
+                return historical_signal
+            
+            # 2. 多时间框架分析兜底
+            if self.fallback_config['multi_timeframe_enabled']:
+                mt_signal = await self._generate_multi_timeframe_signal(market_data)
+                if mt_signal and mt_signal.quality_score >= self.fallback_config['quality_score_threshold']:
+                    log_info(f"✅ 使用多时间框架兜底信号: {mt_signal.signal} (质量: {mt_signal.quality_score:.2f})")
+                    return mt_signal
+            
+            # 3. 市场环境自适应兜底
+            market_signal = await self._generate_market_environment_signal(market_data)
+            if market_signal and market_signal.quality_score >= self.fallback_config['quality_score_threshold']:
+                log_info(f"✅ 使用市场环境兜底信号: {market_signal.signal} (质量: {market_signal.quality_score:.2f})")
+                return market_signal
+            
+            # 4. 技术指标综合兜底
+            technical_signal = await self._generate_enhanced_technical_signal(market_data)
+            if technical_signal and technical_signal.quality_score >= self.fallback_config['quality_score_threshold']:
+                log_info(f"✅ 使用技术指标兜底信号: {technical_signal.signal} (质量: {technical_signal.quality_score:.2f})")
+                return technical_signal
+            
+            # 5. 波动率调整兜底
+            if self.fallback_config['volatility_adjustment_enabled']:
+                volatility_signal = await self._generate_volatility_based_signal(market_data)
+                if volatility_signal and volatility_signal.quality_score >= self.fallback_config['quality_score_threshold']:
+                    log_info(f"✅ 使用波动率兜底信号: {volatility_signal.signal} (质量: {volatility_signal.quality_score:.2f})")
+                    return volatility_signal
+            
+            # 6. 最终兜底：保守持有信号
+            final_signal = self._generate_final_fallback_signal(market_data)
+            log_info(f"⚠️ 使用最终兜底信号: {final_signal.signal} (质量: {final_signal.quality_score:.2f})")
+            return final_signal
+            
+        except Exception as e:
+            log_error(f"增强兜底信号生成失败: {e}")
+            # 极端情况下的最终兜底
+            return self._generate_emergency_fallback_signal()
+    
+    async def _generate_historical_consensus_signal(self, signal_history: List[Dict[str, Any]] = None) -> Optional[FallbackSignal]:
+        """生成历史信号共识兜底信号"""
+        try:
+            if not signal_history or len(signal_history) < self.fallback_config['min_historical_signals']:
+                return None
+            
+            # 过滤有效的历史信号
+            valid_signals = []
+            current_time = datetime.now()
+            
+            for sig in signal_history[-10:]:  # 只考虑最近10个信号
+                try:
+                    signal_time = datetime.fromisoformat(sig.get('timestamp', ''))
+                    age_minutes = (current_time - signal_time).total_seconds() / 60
+                    
+                    if age_minutes <= self.fallback_config['max_signal_age_minutes']:
+                        valid_signals.append({
+                            'signal': sig.get('signal', 'HOLD'),
+                            'confidence': sig.get('confidence', 0.5),
+                            'timestamp': signal_time,
+                            'age_minutes': age_minutes
+                        })
+                except (ValueError, KeyError):
+                    continue
+            
+            if len(valid_signals) < self.fallback_config['min_historical_signals']:
+                return None
+            
+            # 分析信号分布
+            signal_counts = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
+            confidence_sum = 0
+            recent_weights = []
+            
+            for i, sig in enumerate(valid_signals):
+                signal_counts[sig['signal']] += 1
+                confidence_sum += sig['confidence']
+                
+                # 时间衰减权重（越新的信号权重越高）
+                age_factor = 1.0 - (sig['age_minutes'] / self.fallback_config['max_signal_age_minutes'])
+                weight = age_factor * (1.0 + i * 0.1)  # 额外的新近度奖励
+                recent_weights.append(weight)
+            
+            # 计算加权平均信心
+            total_weight = sum(recent_weights)
+            if total_weight > 0:
+                weighted_confidence = sum(sig['confidence'] * weight for sig, weight in zip(valid_signals, recent_weights)) / total_weight
+            else:
+                weighted_confidence = confidence_sum / len(valid_signals)
+            
+            # 确定主导信号
+            dominant_signal = max(signal_counts, key=signal_counts.get)
+            consensus_strength = signal_counts[dominant_signal] / len(valid_signals)
+            
+            # 计算质量评分
+            quality_score = self._calculate_consensus_quality(consensus_strength, weighted_confidence, len(valid_signals))
+            
+            # 调整信心度（基于共识强度）
+            adjusted_confidence = weighted_confidence * (0.6 + consensus_strength * 0.4)  # 0.6-1.0倍调整
+            
+            # 确保信心度在合理范围内
+            final_confidence = max(self.fallback_config['min_confidence_threshold'], min(0.85, adjusted_confidence))
+            
+            reason = f"历史共识兜底: {len(valid_signals)}个有效信号中{signal_counts[dominant_signal]}个{dominant_signal} (共识度:{consensus_strength:.1%})"
+            
+            return FallbackSignal(
+                signal=dominant_signal,
+                confidence=final_confidence,
+                reason=reason,
+                signal_type=FallbackSignalType.HISTORICAL_CONSENSUS,
+                timestamp=datetime.now().isoformat(),
+                quality_score=quality_score,
+                market_context={'consensus_strength': consensus_strength, 'valid_signals': len(valid_signals)},
+                reliability_factors=['historical_consensus', f'consensus_strength_{consensus_strength:.2f}', f'signal_count_{len(valid_signals)}']
+            )
+            
+        except Exception as e:
+            log_error(f"历史共识兜底信号生成失败: {e}")
+            return None
+    
+    async def _generate_multi_timeframe_signal(self, market_data: Dict[str, Any]) -> Optional[FallbackSignal]:
+        """生成多时间框架兜底信号"""
+        try:
+            # 获取多时间框架数据
+            timeframe_data = await self._analyze_multiple_timeframes(market_data)
+            
+            if not timeframe_data or len(timeframe_data) < 2:
+                return None
+            
+            # 分析不同时间框架的信号一致性
+            timeframe_signals = {}
+            total_confidence = 0
+            timeframe_weights = {
+                '1m': 0.1, '5m': 0.2, '15m': 0.3, '30m': 0.2, '1h': 0.15, '4h': 0.05
+            }
+            
+            for timeframe, data in timeframe_data.items():
+                if data and 'signal' in data:
+                    signal = data['signal']
+                    confidence = data.get('confidence', 0.5)
+                    weight = timeframe_weights.get(timeframe, 0.1)
+                    
+                    if signal not in timeframe_signals:
+                        timeframe_signals[signal] = {'count': 0, 'weighted_confidence': 0}
+                    
+                    timeframe_signals[signal]['count'] += 1
+                    timeframe_signals[signal]['weighted_confidence'] += confidence * weight
+                    total_confidence += confidence * weight
+            
+            if not timeframe_signals:
+                return None
+            
+            # 确定主导信号
+            dominant_signal = max(timeframe_signals.keys(),
+                                key=lambda x: timeframe_signals[x]['weighted_confidence'])
+            
+            # 计算加权平均信心
+            signal_data = timeframe_signals[dominant_signal]
+            avg_confidence = signal_data['weighted_confidence'] / timeframe_weights.get('15m', 0.3)  # 归一化
+            
+            # 计算时间框架一致性
+            total_timeframes = len(timeframe_data)
+            consistent_timeframes = signal_data['count']
+            consistency_ratio = consistent_timeframes / total_timeframes if total_timeframes > 0 else 0
+            
+            # 质量评分
+            quality_score = self._calculate_timeframe_quality(consistency_ratio, avg_confidence, total_timeframes)
+            
+            # 调整信心度（基于一致性）
+            adjusted_confidence = avg_confidence * (0.7 + consistency_ratio * 0.3)  # 0.7-1.0倍调整
+            
+            final_confidence = max(self.fallback_config['min_confidence_threshold'], min(0.8, adjusted_confidence))
+            
+            reason = f"多时间框架兜底: {consistent_timeframes}/{total_timeframes}个时间框架支持{dominant_signal} (一致性:{consistency_ratio:.1%})"
+            
+            return FallbackSignal(
+                signal=dominant_signal,
+                confidence=final_confidence,
+                reason=reason,
+                signal_type=FallbackSignalType.MULTI_TIMEFRAME,
+                timestamp=datetime.now().isoformat(),
+                quality_score=quality_score,
+                market_context={'consistency_ratio': consistency_ratio, 'timeframes_analyzed': total_timeframes},
+                reliability_factors=['multi_timeframe', f'consistency_{consistency_ratio:.2f}', f'timeframes_{total_timeframes}']
+            )
+            
+        except Exception as e:
+            log_error(f"多时间框架兜底信号生成失败: {e}")
+            return None
+    
+    async def _analyze_multiple_timeframes(self, market_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        """分析多个时间框架"""
+        timeframe_results = {}
+        
+        try:
+            # 模拟不同时间框架的分析结果
+            timeframes = ['1m', '5m', '15m', '30m', '1h', '4h']
+            
+            base_price = market_data.get('price', 50000)
+            base_volatility = market_data.get('atr_pct', 2.0)
+            
+            for timeframe in timeframes:
+                # 模拟不同时间框架的信号
+                signal_data = self._simulate_timeframe_analysis(timeframe, base_price, base_volatility, market_data)
+                if signal_data:
+                    timeframe_results[timeframe] = signal_data
+                    
+        except Exception as e:
+            log_error(f"多时间框架分析失败: {e}")
+        
+        return timeframe_results
+    
+    def _simulate_timeframe_analysis(self, timeframe: str, base_price: float, base_volatility: float, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """模拟时间框架分析"""
+        try:
+            # 时间框架权重
+            timeframe_weights = {
+                '1m': 0.1, '5m': 0.3, '15m': 0.5, '30m': 0.4, '1h': 0.3, '4h': 0.2
+            }
+            
+            weight = timeframe_weights.get(timeframe, 0.1)
+            
+            # 基于市场数据生成基础信号
+            trend_strength = market_data.get('trend_strength', 0)
+            rsi = market_data.get('technical_data', {}).get('rsi', 50)
+            
+            # 生成信号
+            if rsi < 35 and trend_strength > -0.2:
+                base_signal = 'BUY'
+                base_confidence = 0.7
+            elif rsi > 65 and trend_strength < 0.2:
+                base_signal = 'SELL'
+                base_confidence = 0.7
+            else:
+                base_signal = 'HOLD'
+                base_confidence = 0.6
+            
+            # 添加时间框架特定的调整
+            import random
+            random.seed(hash(f"{timeframe}_{base_price}_{int(market_data.get('timestamp', 0))}"))
+            noise = (random.random() - 0.5) * 0.2
+            adjusted_confidence = max(0.3, min(0.9, base_confidence + noise))
+            
+            # 根据时间框架调整信号强度
+            final_confidence = adjusted_confidence * weight
+            
+            return {
+                'signal': base_signal,
+                'confidence': final_confidence,
+                'timeframe': timeframe,
+                'weight': weight,
+                'analysis_type': 'simulated'
+            }
+            
+        except Exception:
+            return None
+    
+    async def _generate_market_environment_signal(self, market_data: Dict[str, Any]) -> Optional[FallbackSignal]:
+        """生成市场环境自适应兜底信号"""
+        try:
+            # 分析当前市场环境
+            market_environment = await self._classify_market_environment(market_data)
+            
+            if not market_environment:
+                return None
+            
+            market_type = market_environment.get('market_type', 'unknown')
+            volatility_level = market_environment.get('volatility_level', 'normal')
+            trend_strength = market_environment.get('trend_strength', 0)
+            
+            # 基于市场环境生成信号
+            if market_type == 'trending_strong':
+                # 强趋势市场：跟随趋势
+                if trend_strength > 0.5:
+                    signal = 'BUY'
+                    base_confidence = 0.7
+                elif trend_strength < -0.5:
+                    signal = 'SELL'
+                    base_confidence = 0.7
+                else:
+                    signal = 'HOLD'
+                    base_confidence = 0.5
+                    
+            elif market_type == 'trending_moderate':
+                # 中等趋势：谨慎跟随
+                if trend_strength > 0.3:
+                    signal = 'BUY'
+                    base_confidence = 0.6
+                elif trend_strength < -0.3:
+                    signal = 'SELL'
+                    base_confidence = 0.6
+                else:
+                    signal = 'HOLD'
+                    base_confidence = 0.6
+                    
+            elif market_type == 'consolidation':
+                # 震荡市场：高抛低吸
+                price_position = market_environment.get('price_position_in_range', 0.5)
+                if price_position < 0.3:  # 低位
+                    signal = 'BUY'
+                    base_confidence = 0.6
+                elif price_position > 0.7:  # 高位
+                    signal = 'SELL'
+                    base_confidence = 0.6
+                else:
+                    signal = 'HOLD'
+                    base_confidence = 0.7
+                    
+            elif market_type == 'high_volatility':
+                # 高波动：保守策略
+                signal = 'HOLD'
+                base_confidence = 0.8  # 高信心持有
+                
+            elif market_type == 'low_volatility':
+                # 低波动：等待突破
+                signal = 'HOLD'
+                base_confidence = 0.6
+                
+            else:
+                # 未知环境：保守持有
+                signal = 'HOLD'
+                base_confidence = 0.5
+            
+            # 根据波动率调整信心
+            volatility_adjustment = {
+                'very_low': 1.1, 'low': 1.05, 'normal': 1.0,
+                'high': 0.9, 'very_high': 0.8
+            }
+            
+            adjusted_confidence = base_confidence * volatility_adjustment.get(volatility_level, 1.0)
+            final_confidence = max(self.fallback_config['min_confidence_threshold'], min(0.85, adjusted_confidence))
+            
+            # 质量评分
+            quality_score = self._calculate_environment_quality(market_type, volatility_level, trend_strength)
+            
+            reason = f"市场环境兜底: {market_type}市场+{volatility_level}波动+趋势强度{trend_strength:.2f} → {signal}"
+            
+            return FallbackSignal(
+                signal=signal,
+                confidence=final_confidence,
+                reason=reason,
+                signal_type=FallbackSignalType.MARKET_ENVIRONMENT,
+                timestamp=datetime.now().isoformat(),
+                quality_score=quality_score,
+                market_context={
+                    'market_type': market_type,
+                    'volatility_level': volatility_level,
+                    'trend_strength': trend_strength,
+                    'price_position': market_environment.get('price_position_in_range', 0.5)
+                },
+                reliability_factors=['market_environment', f'market_type_{market_type}', f'volatility_{volatility_level}']
+            )
+            
+        except Exception as e:
+            log_error(f"市场环境兜底信号生成失败: {e}")
+            return None
+    
+    async def _classify_market_environment(self, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """分类市场环境"""
+        try:
+            # 获取必要数据
+            atr_pct = market_data.get('atr_pct', 0)
+            price_history = market_data.get('price_history', [])
+            trend_analysis = market_data.get('trend_analysis', {})
+            technical_data = market_data.get('technical_data', {})
+            
+            if not price_history or len(price_history) < 10:
+                return None
+            
+            # 1. 波动率分析
+            volatility_level = self._classify_volatility(atr_pct)
+            
+            # 2. 趋势分析
+            trend_strength = self._calculate_trend_strength(price_history, trend_analysis)
+            
+            # 3. 市场类型判断
+            market_type = self._determine_market_type(trend_strength, volatility_level, price_history)
+            
+            # 4. 价格在区间中的位置
+            price_position = self._calculate_price_position_in_range(price_history)
+            
+            return {
+                'market_type': market_type,
+                'volatility_level': volatility_level,
+                'trend_strength': trend_strength,
+                'price_position_in_range': price_position,
+                'classification_confidence': self._calculate_classification_confidence(market_type, volatility_level, trend_strength)
+            }
+            
+        except Exception as e:
+            log_error(f"市场环境分类失败: {e}")
+            return None
+    
+    def _classify_volatility(self, atr_pct: float) -> str:
+        """分类波动率水平"""
+        if atr_pct < 0.8:
+            return 'very_low'
+        elif atr_pct < 1.5:
+            return 'low'
+        elif atr_pct < 3.0:
+            return 'normal'
+        elif atr_pct < 5.0:
+            return 'high'
+        else:
+            return 'very_high'
+    
+    def _calculate_trend_strength(self, price_history: List[float], trend_analysis: Dict[str, Any]) -> float:
+        """计算趋势强度"""
+        try:
+            if len(price_history) < 10:
+                return 0.0
+            
+            # 基于价格历史的趋势计算
+            recent = price_history[-10:]
+            current_price = recent[-1]
+            past_price = recent[0]
+            
+            price_trend = (current_price - past_price) / past_price if past_price > 0 else 0
+            
+            # 基于技术分析的趋势
+            technical_trend = 0
+            if isinstance(trend_analysis, dict):
+                overall_trend = trend_analysis.get('overall', 'neutral')
+                if overall_trend == 'up':
+                    technical_trend = 0.5
+                elif overall_trend == 'down':
+                    technical_trend = -0.5
+                else:
+                    technical_trend = 0
+            
+            # 综合趋势强度
+            combined_trend = price_trend * 0.7 + technical_trend * 0.3
+            
+            # 归一化到-1到1范围
+            return max(-1.0, min(1.0, combined_trend * 10))  # 放大10倍后裁剪
+            
+        except Exception:
+            return 0.0
+    
+    def _determine_market_type(self, trend_strength: float, volatility_level: str, price_history: List[float]) -> str:
+        """确定市场类型"""
+        try:
+            # 强趋势判断
+            if abs(trend_strength) > 0.7:
+                return 'trending_strong'
+            elif abs(trend_strength) > 0.3:
+                return 'trending_moderate'
+            
+            # 震荡判断
+            if volatility_level in ['low', 'very_low']:
+                # 低波动可能是震荡或趋势停顿
+                recent_range = max(price_history[-10:]) - min(price_history[-10:]) if len(price_history) >= 10 else 0
+                avg_price = sum(price_history[-10:]) / len(price_history[-10:]) if len(price_history) >= 10 else 0
+                
+                if avg_price > 0 and recent_range / avg_price < 0.02:  # 2%以内的波动认为是震荡
+                    return 'consolidation'
+            
+            # 高波动
+            if volatility_level in ['high', 'very_high']:
+                return 'high_volatility'
+            
+            # 低波动
+            if volatility_level in ['very_low']:
+                return 'low_volatility'
+            
+            return 'unknown'
+            
+        except Exception:
+            return 'unknown'
+    
+    def _calculate_price_position_in_range(self, price_history: List[float]) -> float:
+        """计算价格在近期区间中的位置"""
+        try:
+            if len(price_history) < 10:
+                return 0.5
+            
+            recent = price_history[-10:]
+            current_price = recent[-1]
+            min_price = min(recent)
+            max_price = max(recent)
+            
+            if max_price > min_price:
+                return (current_price - min_price) / (max_price - min_price)
+            else:
+                return 0.5
+                
+        except Exception:
+            return 0.5
+    
+    def _calculate_classification_confidence(self, market_type: str, volatility_level: str, trend_strength: float) -> float:
+        """计算分类信心度"""
+        # 基于分类清晰度的信心评分
+        clarity_scores = {
+            'trending_strong': 0.9,
+            'trending_moderate': 0.7,
+            'consolidation': 0.6,
+            'high_volatility': 0.5,
+            'low_volatility': 0.6,
+            'unknown': 0.3
+        }
+        
+        base_confidence = clarity_scores.get(market_type, 0.3)
+        
+        # 趋势强度增加信心
+        trend_confidence = abs(trend_strength) * 0.2
+        
+        # 波动率极端值降低信心
+        volatility_penalty = 0.1 if volatility_level in ['very_low', 'very_high'] else 0
+        
+        return max(0.1, min(1.0, base_confidence + trend_confidence - volatility_penalty))
+    
+    async def _generate_enhanced_technical_signal(self, market_data: Dict[str, Any]) -> Optional[FallbackSignal]:
+        """生成增强技术指标兜底信号"""
+        try:
+            # 获取技术指标数据
+            technical_data = market_data.get('technical_data', {})
+            if not technical_data:
+                return None
+            
+            # 多因子技术指标分析
+            factors = []
+            
+            # 1. RSI因子
+            rsi = technical_data.get('rsi', 50)
+            rsi_factor = self._calculate_rsi_factor(rsi)
+            if rsi_factor:
+                factors.append(rsi_factor)
+            
+            # 2. MACD因子
+            macd_data = technical_data.get('macd', {})
+            macd_factor = self._calculate_macd_factor(macd_data)
+            if macd_factor:
+                factors.append(macd_factor)
+            
+            # 3. 均线因子
+            ma_status = technical_data.get('ma_status', 'N/A')
+            ma_factor = self._calculate_ma_factor(ma_status)
+            if ma_factor:
+                factors.append(ma_factor)
+            
+            # 4. 布林带因子
+            bollinger_data = technical_data.get('bollinger', {})
+            current_price = market_data.get('price', 0)
+            bollinger_factor = self._calculate_bollinger_factor(bollinger_data, current_price)
+            if bollinger_factor:
+                factors.append(bollinger_factor)
+            
+            # 5. 成交量因子
+            volume_ratio = technical_data.get('volume_ratio', 1.0)
+            volume_factor = self._calculate_volume_factor(volume_ratio)
+            if volume_factor:
+                factors.append(volume_factor)
+            
+            # 6. 支撑阻力因子
+            sr_data = technical_data.get('support_resistance', {})
+            sr_factor = self._calculate_support_resistance_factor(sr_data, current_price)
+            if sr_factor:
+                factors.append(sr_factor)
+            
+            if not factors:
+                return None
+            
+            # 综合评分
+            total_score = sum(factor['score'] for factor in factors)
+            total_weight = sum(factor['weight'] for factor in factors)
+            avg_confidence = sum(factor['confidence'] for factor in factors) / len(factors)
+            
+            # 确定信号
+            if total_score > 0.3:
+                signal = 'SELL'
+                confidence_multiplier = min(1.0, total_score)
+            elif total_score < -0.3:
+                signal = 'BUY'
+                confidence_multiplier = min(1.0, abs(total_score))
+            else:
+                signal = 'HOLD'
+                confidence_multiplier = 0.8  # 持有信号保持较高信心
+            
+            # 质量评分
+            quality_score = self._calculate_technical_quality(factors, abs(total_score))
+            
+            # 最终信心度
+            adjusted_confidence = avg_confidence * confidence_multiplier
+            final_confidence = max(self.fallback_config['min_confidence_threshold'], min(0.85, adjusted_confidence))
+            
+            # 构建理由
+            active_factors = [f['name'] for f in factors if abs(f['score']) > 0.2]
+            reason = f"技术指标兜底: {len(factors)}个因子分析，主要因子: {', '.join(active_factors[:3])} → {signal}"
+            
+            return FallbackSignal(
+                signal=signal,
+                confidence=final_confidence,
+                reason=reason,
+                signal_type=FallbackSignalType.TECHNICAL_INDICATORS,
+                timestamp=datetime.now().isoformat(),
+                quality_score=quality_score,
+                market_context={
+                    'factors_count': len(factors),
+                    'total_score': total_score,
+                    'active_factors': active_factors,
+                    'avg_confidence': avg_confidence
+                },
+                reliability_factors=['technical_indicators', f'factors_{len(factors)}', f'score_{total_score:.2f}']
+            )
+            
+        except Exception as e:
+            log_error(f"增强技术指标兜底信号生成失败: {e}")
+            return None
+    
+    async def _generate_volatility_based_signal(self, market_data: Dict[str, Any]) -> Optional[FallbackSignal]:
+        """生成波动率基础兜底信号"""
+        try:
+            # 获取波动率数据
+            atr_pct = market_data.get('atr_pct', 0)
+            volatility_level = market_data.get('volatility', 'normal')
+            price_history = market_data.get('price_history', [])
+            
+            if not price_history or len(price_history) < 10:
+                return None
+            
+            # 分析波动率特征
+            recent_prices = price_history[-10:]
+            price_changes = [abs(recent_prices[i] - recent_prices[i-1]) for i in range(1, len(recent_prices))]
+            avg_change = np.mean(price_changes) if price_changes else 0
+            
+            # 基于波动率的策略
+            if atr_pct < 1.0:  # 低波动
+                # 低波动：等待突破
+                signal = 'HOLD'
+                base_confidence = 0.7
+                
+                # 检查是否有突破迹象
+                if len(price_changes) >= 3:
+                    recent_volatility = np.std(price_changes[-3:]) / np.mean(price_changes[-3:]) if np.mean(price_changes[-3:]) > 0 else 0
+                    if recent_volatility > 1.5:  # 波动率增加
+                        # 判断突破方向
+                        if price_changes[-1] > avg_change * 1.2:
+                            signal = 'BUY'
+                            base_confidence = 0.6
+                        elif price_changes[-1] < -avg_change * 1.2:
+                            signal = 'SELL'
+                            base_confidence = 0.6
+                        
+            elif atr_pct > 3.0:  # 高波动
+                # 高波动：保守持有，避免追涨杀跌
+                signal = 'HOLD'
+                base_confidence = 0.8  # 高信心持有
+                
+            else:  # 正常波动
+                # 正常波动：基于趋势
+                current_price = market_data.get('price', 0)
+                if len(price_history) >= 20:
+                    trend = (current_price - price_history[-20]) / price_history[-20] if price_history[-20] > 0 else 0
+                    
+                    if trend > 0.02:  # 上涨趋势
+                        signal = 'BUY'
+                        base_confidence = 0.6
+                    elif trend < -0.02:  # 下跌趋势
+                        signal = 'SELL'
+                        base_confidence = 0.6
+                    else:
+                        signal = 'HOLD'
+                        base_confidence = 0.6
+                else:
+                    signal = 'HOLD'
+                    base_confidence = 0.5
+            
+            # 波动率调整
+            volatility_multiplier = {
+                'very_low': 1.1, 'low': 1.05, 'normal': 1.0,
+                'high': 0.85, 'very_high': 0.7
+            }
+            
+            adjusted_confidence = base_confidence * volatility_multiplier.get(volatility_level, 1.0)
+            final_confidence = max(self.fallback_config['min_confidence_threshold'], min(0.8, adjusted_confidence))
+            
+            # 质量评分
+            quality_score = self._calculate_volatility_quality(atr_pct, volatility_level, signal)
+            
+            reason = f"波动率兜底: ATR{atr_pct:.1f}%{volatility_level}波动 → {signal}"
+            
+            return FallbackSignal(
+                signal=signal,
+                confidence=final_confidence,
+                reason=reason,
+                signal_type=FallbackSignalType.VOLATILITY_BASED,
+                timestamp=datetime.now().isoformat(),
+                quality_score=quality_score,
+                market_context={
+                    'atr_pct': atr_pct,
+                    'volatility_level': volatility_level,
+                    'avg_price_change': avg_change,
+                    'price_history_length': len(price_history)
+                },
+                reliability_factors=['volatility_based', f'atr_{atr_pct:.1f}', f'level_{volatility_level}']
+            )
+            
+        except Exception as e:
+            log_error(f"波动率兜底信号生成失败: {e}")
+            return None
+    
+    def _generate_final_fallback_signal(self, market_data: Dict[str, Any]) -> FallbackSignal:
+        """生成最终兜底信号（最保守的策略）"""
+        try:
+            current_price = market_data.get('price', 0)
+            price_history = market_data.get('price_history', [])
+            
+            # 基于简单趋势分析
+            if len(price_history) >= 5 and current_price > 0:
+                # 计算简单移动平均
+                recent_avg = sum(price_history[-5:]) / 5
+                price_vs_avg = (current_price - recent_avg) / recent_avg
+                
+                if price_vs_avg > 0.01:  # 价格在均线上方1%
+                    signal = 'BUY'
+                    confidence = 0.4
+                    reason = f"最终兜底: 价格高于近期均价{price_vs_avg:.2%}，轻微看涨"
+                elif price_vs_avg < -0.01:  # 价格在均线下方1%
+                    signal = 'SELL'
+                    confidence = 0.4
+                    reason = f"最终兜底: 价格低于近期均价{abs(price_vs_avg):.2%}，轻微看跌"
+                else:
+                    signal = 'HOLD'
+                    confidence = 0.5
+                    reason = f"最终兜底: 价格接近近期均价，保持观望"
+            else:
+                # 数据不足，保守持有
+                signal = 'HOLD'
+                confidence = self.fallback_config['emergency_hold_confidence']
+                reason = "最终兜底: 数据不足，保守持有观望"
+            
+            return FallbackSignal(
+                signal=signal,
+                confidence=confidence,
+                reason=reason,
+                signal_type=FallbackSignalType.FINAL_BACKUP,
+                timestamp=datetime.now().isoformat(),
+                quality_score=0.5,  # 基础质量评分
+                market_context={'fallback_level': 'final', 'data_sufficiency': len(price_history) >= 5},
+                reliability_factors=['final_backup', 'conservative_strategy', 'data_limited' if len(price_history) < 5 else 'data_sufficient']
+            )
+            
+        except Exception as e:
+            log_error(f"最终兜底信号生成失败: {e}")
+            return self._generate_emergency_fallback_signal()
+    
+    def _generate_emergency_fallback_signal(self) -> FallbackSignal:
+        """生成紧急兜底信号（极端情况下的最后保障）"""
+        return FallbackSignal(
+            signal='HOLD',
+            confidence=self.fallback_config['emergency_hold_confidence'],
+            reason="紧急兜底: 系统异常，强制保守持有",
+            signal_type=FallbackSignalType.FINAL_BACKUP,
+            timestamp=datetime.now().isoformat(),
+            quality_score=0.3,  # 最低质量评分
+            market_context={'emergency': True, 'system_error': True},
+            reliability_factors=['emergency_fallback', 'system_error', 'minimum_confidence']
+        )
+    
+    # 辅助计算方法
+    def _calculate_consensus_quality(self, consensus_strength: float, avg_confidence: float, signal_count: int) -> float:
+        """计算历史共识质量评分"""
+        # 共识强度权重 40%，平均信心 35%，信号数量 25%
+        consensus_score = consensus_strength * 0.4
+        confidence_score = avg_confidence * 0.35
+        count_score = min(1.0, signal_count / 10) * 0.25  # 最多10个信号满分
+        
+        return consensus_score + confidence_score + count_score
+    
+    def _calculate_timeframe_quality(self, consistency_ratio: float, avg_confidence: float, timeframe_count: int) -> float:
+        """计算时间框架质量评分"""
+        consistency_score = consistency_ratio * 0.5
+        confidence_score = avg_confidence * 0.3
+        count_score = min(1.0, timeframe_count / 6) * 0.2  # 最多6个时间框架满分
+        
+        return consistency_score + confidence_score + count_score
+    
+    def _calculate_environment_quality(self, market_type: str, volatility_level: str, trend_strength: float) -> float:
+        """计算市场环境质量评分"""
+        # 市场环境清晰度评分
+        market_clarity = {
+            'trending_strong': 0.9, 'trending_moderate': 0.7,
+            'consolidation': 0.6, 'high_volatility': 0.4,
+            'low_volatility': 0.5, 'unknown': 0.3
+        }
+        
+        clarity_score = market_clarity.get(market_type, 0.3) * 0.4
+        
+        # 趋势强度评分
+        trend_score = abs(trend_strength) * 0.3
+        
+        # 波动率适宜性评分
+        volatility_score = {
+            'low': 0.8, 'normal': 0.9, 'high': 0.6
+        }.get(volatility_level, 0.5) * 0.3
+        
+        return clarity_score + trend_score + volatility_score
+    
+    def _calculate_pattern_quality(self, avg_reliability: float, avg_strength: float, pattern_count: int) -> float:
+        """计算模式识别质量评分"""
+        reliability_score = avg_reliability * 0.4
+        strength_score = avg_strength * 0.4
+        count_score = min(1.0, pattern_count / 5) * 0.2  # 最多5个模式满分
+        
+        return reliability_score + strength_score + count_score
+    
+    def _calculate_technical_quality(self, factors: List[Dict], total_score: float) -> float:
+        """计算技术指标质量评分"""
+        factor_count_score = min(1.0, len(factors) / 6) * 0.3  # 最多6个因子满分
+        score_magnitude_score = min(1.0, abs(total_score) / 3.0) * 0.4  # 最大分数3.0满分
+        avg_confidence_score = sum(f['confidence'] for f in factors) / len(factors) * 0.3 if factors else 0
+        
+        return factor_count_score + score_magnitude_score + avg_confidence_score
+    
+    def _calculate_volatility_quality(self, atr_pct: float, volatility_level: str, signal: str) -> float:
+        """计算波动率质量评分"""
+        # 波动率适宜性
+        volatility_appropriateness = {
+            ('low', 'HOLD'): 0.9, ('normal', 'HOLD'): 0.7, ('high', 'HOLD'): 0.9,
+            ('low', 'BUY'): 0.6, ('normal', 'BUY'): 0.8, ('high', 'BUY'): 0.4,
+            ('low', 'SELL'): 0.6, ('normal', 'SELL'): 0.8, ('high', 'SELL'): 0.4
+        }
+        
+        appropriateness = volatility_appropriateness.get((volatility_level, signal), 0.5)
+        
+        # ATR合理性评分
+        atr_reasonableness = 1.0 - abs(atr_pct - 2.0) / 5.0  # 2%为最优，偏离越大分数越低
+        atr_reasonableness = max(0.0, min(1.0, atr_reasonableness))
+        
+        return appropriateness * 0.6 + atr_reasonableness * 0.4
+    
+    # 技术指标因子计算方法
+    def _calculate_rsi_factor(self, rsi: float) -> Optional[Dict[str, Any]]:
+        """计算RSI因子"""
+        try:
+            if rsi < 30:  # 超卖
+                score = -0.8
+                confidence = 0.8
+            elif rsi > 70:  # 超买
+                score = 0.8
+                confidence = 0.8
+            elif 30 <= rsi <= 40:  # 弱势
+                score = -0.4
+                confidence = 0.6
+            elif 60 <= rsi <= 70:  # 强势
+                score = 0.4
+                confidence = 0.6
+            else:  # 中性
+                score = 0.0
+                confidence = 0.4
+            
+            return {
+                'name': 'RSI',
+                'score': score,
+                'confidence': confidence,
+                'weight': 0.25
+            }
+        except Exception:
+            return None
+    
+    def _calculate_macd_factor(self, macd_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """计算MACD因子"""
+        try:
+            if not macd_data or not isinstance(macd_data, dict):
+                return None
+            
+            # 获取MACD数据
+            macd_status = macd_data.get('macd', 'N/A') if isinstance(macd_data, dict) else str(macd_data)
+            
+            if '金叉' in macd_status or '看涨' in macd_status:
+                score = -0.7
+                confidence = 0.8
+            elif '死叉' in macd_status or '看跌' in macd_status:
+                score = 0.7
+                confidence = 0.8
+            elif '中性' in macd_status or '震荡' in macd_status:
+                score = 0.0
+                confidence = 0.4
+            else:
+                return None
+            
+            return {
+                'name': 'MACD',
+                'score': score,
+                'confidence': confidence,
+                'weight': 0.2
+            }
+        except Exception:
+            return None
+    
+    def _calculate_ma_factor(self, ma_status: str) -> Optional[Dict[str, Any]]:
+        """计算均线因子"""
+        try:
+            if not ma_status or not isinstance(ma_status, str):
+                return None
+            
+            ma_status_lower = ma_status.lower()
+            
+            if '多头排列' in ma_status_lower or 'bullish' in ma_status_lower:
+                score = -0.6
+                confidence = 0.7
+            elif '空头排列' in ma_status_lower or 'bearish' in ma_status_lower:
+                score = 0.6
+                confidence = 0.7
+            elif '金叉' in ma_status_lower or 'golden cross' in ma_status_lower:
+                score = -0.8
+                confidence = 0.8
+            elif '死叉' in ma_status_lower or 'death cross' in ma_status_lower:
+                score = 0.8
+                confidence = 0.8
+            elif '震荡' in ma_status_lower or 'consolidation' in ma_status_lower:
+                score = 0.0
+                confidence = 0.3
+            else:
+                return None
+            
+            return {
+                'name': 'MA',
+                'score': score,
+                'confidence': confidence,
+                'weight': 0.2
+            }
+        except Exception:
+            return None
+    
+    def _calculate_bollinger_factor(self, bollinger_data: Dict[str, Any], current_price: float) -> Optional[Dict[str, Any]]:
+        """计算布林带因子"""
+        try:
+            if not bollinger_data or not isinstance(bollinger_data, dict) or current_price <= 0:
+                return None
+            
+            # 获取布林带数据
+            upper_band = bollinger_data.get('upper', 0)
+            lower_band = bollinger_data.get('lower', 0)
+            
+            if upper_band <= lower_band or upper_band <= 0 or lower_band <= 0:
+                return None
+            
+            # 计算价格在布林带中的位置
+            band_range = upper_band - lower_band
+            price_position = (current_price - lower_band) / band_range
+            
+            # 布林带交易策略
+            if price_position < 0.2:  # 靠近下轨
+                score = -0.7
+                confidence = 0.8
+            elif price_position > 0.8:  # 靠近上轨
+                score = 0.7
+                confidence = 0.8
+            elif 0.4 <= price_position <= 0.6:  # 靠近中轨
+                score = 0.0
+                confidence = 0.4
+            else:
+                # 中间区域
+                score = -0.3 if price_position < 0.5 else 0.3
+                confidence = 0.5
+            
+            return {
+                'name': 'Bollinger',
+                'score': score,
+                'confidence': confidence,
+                'weight': 0.15
+            }
+        except Exception:
+            return None
+    
+    def _calculate_volume_factor(self, volume_ratio: float) -> Optional[Dict[str, Any]]:
+        """计算成交量因子"""
+        try:
+            if volume_ratio > 2.0:  # 成交量放大2倍以上
+                score = 0.0  # 中性，需要结合价格判断
+                confidence = 0.7
+            elif volume_ratio > 1.5:  # 成交量放大1.5倍以上
+                score = 0.0
+                confidence = 0.6
+            elif volume_ratio < 0.5:  # 成交量萎缩50%以上
+                score = 0.0  # 中性，市场观望
+                confidence = 0.5
+            else:
+                score = 0.0
+                confidence = 0.3
+            
+            return {
+                'name': 'Volume',
+                'score': score,
+                'confidence': confidence,
+                'weight': 0.1
+            }
+        except Exception:
+            return None
+    
+    def _calculate_support_resistance_factor(self, sr_data: Dict[str, Any], current_price: float) -> Optional[Dict[str, Any]]:
+        """计算支撑阻力因子"""
+        try:
+            if not sr_data or not isinstance(sr_data, dict) or current_price <= 0:
+                return None
+            
+            # 获取支撑阻力位
+            support = sr_data.get('support', 0)
+            resistance = sr_data.get('resistance', 0)
+            
+            if support <= 0 or resistance <= 0 or support >= resistance:
+                return None
+            
+            # 计算与支撑阻力的距离
+            support_distance = abs(current_price - support) / current_price * 100
+            resistance_distance = abs(current_price - resistance) / current_price * 100
+            
+            # 支撑阻力策略
+            if support_distance < 1.0:  # 靠近支撑位（1%以内）
+                score = -0.8
+                confidence = 0.9
+            elif resistance_distance < 1.0:  # 靠近阻力位（1%以内）
+                score = 0.8
+                confidence = 0.9
+            elif support_distance < 2.0:  # 接近支撑位（2%以内）
+                score = -0.5
+                confidence = 0.7
+            elif resistance_distance < 2.0:  # 接近阻力位（2%以内）
+                score = 0.5
+                confidence = 0.7
+            else:
+                # 在中间区域，根据相对距离给出轻微信号
+                total_range = resistance - support
+                if total_range > 0:
+                    position_in_range = (current_price - support) / total_range
+                    if position_in_range < 0.3:  # 靠近支撑
+                        score = -0.3
+                        confidence = 0.5
+                    else:  # 靠近阻力
+                        score = 0.3
+                        confidence = 0.5
+                else:
+                    return None
+            
+            return {
+                'name': 'SupportResistance',
+                'score': score,
+                'confidence': confidence,
+                'weight': 0.1
+            }
+        except Exception:
+            return None
+
+
+# 创建全局兜底引擎实例
+fallback_engine = EnhancedFallbackEngine()
+
+# 导出函数供其他模块使用
+async def generate_enhanced_fallback_signal(market_data: Dict[str, Any],
+                                          signal_history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """生成增强兜底信号的外部接口"""
+    try:
+        fallback_signal = await fallback_engine.generate_fallback_signal(market_data, signal_history)
+        
+        # 转换为标准格式
+        return {
+            'signal': fallback_signal.signal,
+            'confidence': fallback_signal.confidence,
+            'reason': fallback_signal.reason,
+            'timestamp': fallback_signal.timestamp,
+            'fallback_type': fallback_signal.signal_type.value,
+            'quality_score': fallback_signal.quality_score,
+            'market_context': fallback_signal.market_context,
+            'reliability_factors': fallback_signal.reliability_factors,
+            'is_fallback': True,
+            'is_enhanced_fallback': True
+        }
+        
+    except Exception as e:
+        log_error(f"增强兜底信号接口调用失败: {e}")
+        # 返回基础兜底信号
+        return {
+            'signal': 'HOLD',
+            'confidence': 0.4,
+            'reason': '增强兜底系统异常，使用基础兜底',
+            'timestamp': datetime.now().isoformat(),
+            'fallback_type': 'emergency',
+            'quality_score': 0.2,
+            'is_fallback': True,
+            'is_enhanced_fallback': False
+        }
