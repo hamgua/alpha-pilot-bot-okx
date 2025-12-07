@@ -8,6 +8,7 @@ import aiohttp
 import json
 import time
 import traceback
+import random
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import concurrent.futures
@@ -30,6 +31,64 @@ class AIClient:
     """AI客户端 - 支持多AI提供商"""
     
     def __init__(self):
+        # 超时配置 - 基于不同AI提供商的性能特点
+        self.timeout_config = {
+            'deepseek': {
+                'connection_timeout': 5.0,    # 连接超时
+                'response_timeout': 8.0,      # 响应超时
+                'total_timeout': 12.0,        # 总超时
+                'retry_base_delay': 2.0,      # 基础重试延迟
+                'max_retries': 2,             # 最大重试次数
+                'performance_score': 0.85     # 性能评分（基于历史数据）
+            },
+            'kimi': {
+                'connection_timeout': 4.0,
+                'response_timeout': 6.0,
+                'total_timeout': 10.0,
+                'retry_base_delay': 1.5,
+                'max_retries': 2,
+                'performance_score': 0.90
+            },
+            'qwen': {
+                'connection_timeout': 3.0,
+                'response_timeout': 5.0,
+                'total_timeout': 8.0,
+                'retry_base_delay': 1.0,
+                'max_retries': 2,
+                'performance_score': 0.95
+            },
+            'openai': {
+                'connection_timeout': 6.0,
+                'response_timeout': 10.0,
+                'total_timeout': 15.0,
+                'retry_base_delay': 3.0,
+                'max_retries': 1,
+                'performance_score': 0.80
+            }
+        }
+        
+        # 动态超时调整参数
+        self.timeout_stats = {
+            'provider': {},  # 各提供商的响应时间统计
+            'global': {
+                'avg_response_time': 0.0,
+                'timeout_rate': 0.0,
+                'total_requests': 0,
+                'timeout_requests': 0
+            }
+        }
+        
+        # 重试成本控制
+        self.retry_cost_config = {
+            'max_daily_cost': 100,  # 每日最大重试成本（请求次数）
+            'current_daily_cost': 0,
+            'cost_weights': {
+                'deepseek': 1.0,
+                'kimi': 1.2,
+                'qwen': 0.8,
+                'openai': 1.5
+            }
+        }
         try:
             ai_models = config.get('ai', 'models')
             if not ai_models:
@@ -67,6 +126,16 @@ class AIClient:
             
             if not self.providers:
                 log_warning("⚠️ 没有任何AI提供商被配置，将使用回退信号模式")
+            
+            # 初始化超时统计
+            for provider in self.providers.keys():
+                self.timeout_stats['provider'][provider] = {
+                    'avg_response_time': 0.0,
+                    'timeout_count': 0,
+                    'total_requests': 0,
+                    'success_rate': 1.0,
+                    'last_response_time': 0.0
+                }
             
         except Exception as e:
             log_error(f"AI客户端初始化失败: {type(e).__name__}: {e}")
@@ -185,13 +254,32 @@ class AIClient:
                 'presence_penalty': 0.4     # 强力鼓励新话题
             }
             
+            # 获取提供商特定的超时配置
+            provider_timeout = self.timeout_config.get(provider, self.timeout_config['openai'])
+            
+            # 动态调整超时时间
+            adjusted_timeout = self._calculate_dynamic_timeout(provider, provider_timeout)
+            
+            # 记录请求开始时间
+            request_start_time = time.time()
+            
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)  # 从30秒优化到10秒
-                ) as response:
+                try:
+                    async with session.post(
+                        url,
+                        headers=headers,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(
+                            total=adjusted_timeout['total_timeout'],
+                            connect=adjusted_timeout['connection_timeout'],
+                            sock_read=adjusted_timeout['response_timeout']
+                        )
+                    ) as response:
+                        
+                        # 记录响应时间
+                        response_time = time.time() - request_start_time
+                        self._update_timeout_stats(provider, response_time, True)
+                        
                     if response.status == 200:
                         try:
                             data = await response.json()
@@ -207,6 +295,20 @@ class AIClient:
                     else:
                         log_error(f"{provider} API调用失败: {response.status}")
                         return None
+                        
+                except asyncio.TimeoutError:
+                    # 记录超时统计
+                    self._update_timeout_stats(provider, 0, False, timeout_type='timeout')
+                    log_error(f"{provider} 请求超时（{adjusted_timeout['total_timeout']}秒）")
+                    raise  # 重新抛出异常供上层处理
+                    
+                except Exception as e:
+                    # 记录异常统计
+                    self._update_timeout_stats(provider, 0, False, timeout_type='error')
+                    log_error(f"{provider} API调用异常: {type(e).__name__}: {e}")
+                    import traceback
+                    log_error(f"{provider} 完整堆栈:\n{traceback.format_exc()}")
+                    raise  # 重新抛出异常供上层处理
                         
         except Exception as e:
             log_error(f"{provider} API调用异常: {type(e).__name__}: {e}")
@@ -639,7 +741,7 @@ MACD: {macd}
             return None
     
     async def get_multi_ai_signals(self, market_data: Dict[str, Any], providers: List[str] = None) -> List[AISignal]:
-        """获取多AI信号（增强版）- 优化失败AI处理"""
+        """获取多AI信号（增强版）- 实现指数退避重试和成本控制"""
         if providers is None:
             providers = ['deepseek', 'kimi', 'openai']
             
@@ -649,11 +751,6 @@ MACD: {macd}
         if not enabled_providers:
             log_warning("没有可用的AI提供商")
             return []
-            
-        # 设置超时和重试机制（优化版）
-        timeout = 10.0  # 从25秒优化到10秒
-        max_retries = 1  # 从2次重试优化到1次重试
-        retry_delay = 5  # 重试间隔5秒
         
         signals = []
         failed_providers = []
@@ -661,12 +758,27 @@ MACD: {macd}
         
         for provider in enabled_providers:
             provider_success = False
+            provider_config = self.timeout_config.get(provider, self.timeout_config['openai'])
+            max_retries = provider_config['max_retries']
+            
             for attempt in range(max_retries + 1):
                 try:
+                    # 检查重试成本限制
+                    if attempt > 0 and not self._check_retry_cost_limit(provider):
+                        log_warning(f"⚠️ {provider} 重试成本超出限制，跳过重试")
+                        break
+                    
+                    # 获取动态调整的超时时间
+                    adjusted_timeout = self._calculate_dynamic_timeout(provider, provider_config)
+                    signal_timeout = adjusted_timeout['total_timeout']
+                    
+                    log_info(f"🔄 {provider} 第{attempt + 1}次尝试，超时:{signal_timeout:.1f}s")
+                    
                     signal = await asyncio.wait_for(
                         self.get_signal_from_provider(provider, market_data),
-                        timeout=timeout
+                        timeout=signal_timeout
                     )
+                    
                     if signal:
                         signals.append(signal)
                         successful_providers.append(provider)
@@ -677,95 +789,82 @@ MACD: {macd}
                         break
                     else:
                         if attempt < max_retries:
-                            log_warning(f"{provider}第{attempt + 1}次尝试失败，{retry_delay}秒后重试...")
+                            # 计算指数退避延迟
+                            retry_delay = self._calculate_exponential_backoff(provider, attempt, adjusted_timeout['retry_base_delay'])
+                            log_warning(f"{provider}第{attempt + 1}次尝试失败，{retry_delay:.1f}秒后重试...")
                             await asyncio.sleep(retry_delay)
+                            # 更新重试成本
+                            self._update_retry_cost(provider)
                         else:
                             log_error(f"{provider}最终失败")
                             
                 except asyncio.TimeoutError:
-                    log_error(f"{provider}请求超时（{timeout}秒）")
+                    log_error(f"{provider}请求超时（动态超时）")
                     if attempt < max_retries:
-                        log_info(f"{provider}超时重试，等待{retry_delay}秒...")
+                        # 计算指数退避延迟
+                        retry_delay = self._calculate_exponential_backoff(provider, attempt, provider_config['retry_base_delay'])
+                        log_info(f"{provider}超时重试，等待{retry_delay:.1f}秒...")
                         await asyncio.sleep(retry_delay)
+                        # 更新重试成本
+                        self._update_retry_cost(provider)
+                        
                 except Exception as e:
                     log_error(f"{provider}异常: {e}")
                     if attempt < max_retries:
-                        log_info(f"{provider}异常重试，等待{retry_delay}秒...")
+                        # 计算指数退避延迟
+                        retry_delay = self._calculate_exponential_backoff(provider, attempt, provider_config['retry_base_delay'])
+                        log_info(f"{provider}异常重试，等待{retry_delay:.1f}秒...")
                         await asyncio.sleep(retry_delay)
+                        # 更新重试成本
+                        self._update_retry_cost(provider)
             
             if not provider_success:
                 failed_providers.append(provider)
         
-        # 记录融合统计
+        # 记录融合统计和超时性能
         log_info(f"📊 AI信号获取统计: 成功={len(successful_providers)}, 失败={len(failed_providers)}")
+        log_info(f"📊 重试成本统计: 当前成本={self.retry_cost_config['current_daily_cost']:.1f}, 上限={self.retry_cost_config['max_daily_cost']}")
+        
+        # 输出超时性能统计
+        self._log_timeout_performance()
+        
         if failed_providers:
             log_warning(f"⚠️ 失败的AI提供商: {failed_providers}")
         
         return signals
     
-    def _generate_smart_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """基于技术指标生成智能回退信号"""
+    def _log_timeout_performance(self):
+        """记录超时性能统计"""
         try:
-            # 获取技术指标数据
-            technical_data = market_data.get('technical_data', {})
-            rsi = float(technical_data.get('rsi', 50))
-            price = float(market_data.get('price', 0))
+            global_stats = self.timeout_stats['global']
+            if global_stats['total_requests'] > 0:
+                log_info(f"📊 全局超时性能: 总请求={global_stats['total_requests']}, 超时率={global_stats['timeout_rate']:.2%}")
             
-            # 获取价格历史数据
-            price_history = market_data.get('price_history', [])
-            price_position = 50  # 默认中位
-            
-            if price_history and len(price_history) >= 20:
-                recent_prices = price_history[-20:]
-                min_price = min(recent_prices)
-                max_price = max(recent_prices)
-                if max_price > min_price:
-                    price_position = ((price - min_price) / (max_price - min_price)) * 100
-            
-            # 基于技术指标生成信号
-            if rsi < 35 and price_position < 30:  # 超卖且价格低位
-                signal = 'BUY'
-                confidence = 0.7
-                reason = f"智能回退: RSI超卖({rsi:.1f})+价格低位({price_position:.1f}%)，建议买入"
-            elif rsi > 70 and price_position > 70:  # 超买且价格高位
-                signal = 'SELL'
-                confidence = 0.7
-                reason = f"智能回退: RSI超买({rsi:.1f})+价格高位({price_position:.1f}%)，建议卖出"
-            elif 40 <= rsi <= 60 and 40 <= price_position <= 60:  # 中性区域
-                signal = 'HOLD'
-                confidence = 0.6
-                reason = f"智能回退: RSI中性({rsi:.1f})+价格中位({price_position:.1f}%)，建议观望"
-            else:
-                # 混合情况，倾向于HOLD
-                signal = 'HOLD'
-                confidence = 0.5
-                reason = f"智能回退: 技术指标矛盾(RSI:{rsi:.1f},位置:{price_position:.1f}%)，保守观望"
-            
-            log_info(f"🤖 智能回退信号生成: {signal} (信心: {confidence:.1f})")
-            log_info(f"📊 回退理由: {reason}")
-            
-            return {
-                'signal': signal,
-                'confidence': confidence,
-                'reason': reason
-            }
-            
+            # 输出各提供商的统计
+            for provider, stats in self.timeout_stats['provider'].items():
+                if stats['total_requests'] > 0:
+                    log_info(f"📊 {provider} 性能: 成功率={stats['success_rate']:.2%}, 平均响应={stats['avg_response_time']:.1f}s, 请求数={stats['total_requests']}")
+                    
         except Exception as e:
-            log_error(f"智能回退信号生成失败: {e}")
-            # 极端情况下的最终回退
-            return {
-                'signal': 'HOLD',
-                'confidence': 0.5,
-                'reason': '智能回退生成失败，使用保守HOLD信号'
-            }
+            log_error(f"超时性能记录失败: {e}")
     
     def _generate_smart_fallback_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """基于技术指标生成智能回退信号"""
+        """基于增强技术指标生成智能回退信号 - 多因子分析"""
         try:
-            # 获取技术指标数据
+            # 获取扩展技术指标数据
             technical_data = market_data.get('technical_data', {})
-            rsi = float(technical_data.get('rsi', 50))
             price = float(market_data.get('price', 0))
+            
+            # 基础技术指标
+            rsi = float(technical_data.get('rsi', 50))
+            macd = technical_data.get('macd', {})
+            ma_status = technical_data.get('ma_status', 'N/A')
+            
+            # 扩展技术指标
+            atr_pct = float(technical_data.get('atr_pct', 0))
+            bollinger = technical_data.get('bollinger', {})
+            volume_ratio = float(technical_data.get('volume_ratio', 1.0))
+            support_resistance = technical_data.get('support_resistance', {})
             
             # 获取价格历史数据
             price_history = market_data.get('price_history', [])
@@ -778,42 +877,518 @@ MACD: {macd}
                 if max_price > min_price:
                     price_position = ((price - min_price) / (max_price - min_price)) * 100
             
-            # 基于技术指标生成信号
-            if rsi < 35 and price_position < 30:  # 超卖且价格低位
-                signal = 'BUY'
-                confidence = 0.7
-                reason = f"智能回退: RSI超卖({rsi:.1f})+价格低位({price_position:.1f}%)，建议买入"
-            elif rsi > 70 and price_position > 70:  # 超买且价格高位
-                signal = 'SELL'
-                confidence = 0.7
-                reason = f"智能回退: RSI超买({rsi:.1f})+价格高位({price_position:.1f}%)，建议卖出"
-            elif 40 <= rsi <= 60 and 40 <= price_position <= 60:  # 中性区域
-                signal = 'HOLD'
-                confidence = 0.6
-                reason = f"智能回退: RSI中性({rsi:.1f})+价格中位({price_position:.1f}%)，建议观望"
-            else:
-                # 混合情况，倾向于HOLD
-                signal = 'HOLD'
-                confidence = 0.5
-                reason = f"智能回退: 技术指标矛盾(RSI:{rsi:.1f},位置:{price_position:.1f}%)，保守观望"
+            # 获取市场环境数据
+            trend_analysis = market_data.get('trend_analysis', {})
+            market_volatility = str(market_data.get('volatility', 'normal'))
             
-            log_info(f"🤖 智能回退信号生成: {signal} (信心: {confidence:.1f})")
+            # 多因子信号生成算法
+            signal_score = 0.0  # 信号得分 (-1.0 到 1.0)
+            confidence_factors = []  # 信心因子
+            
+            # 1. RSI因子分析
+            rsi_factor = self._calculate_rsi_factor(rsi, price_position)
+            signal_score += rsi_factor['score']
+            confidence_factors.append(rsi_factor['confidence'])
+            
+            # 2. MACD因子分析
+            macd_factor = self._calculate_macd_factor(macd)
+            signal_score += macd_factor['score'] * 0.8  # MACD权重0.8
+            confidence_factors.append(macd_factor['confidence'])
+            
+            # 3. 均线因子分析
+            ma_factor = self._calculate_ma_factor(ma_status)
+            signal_score += ma_factor['score'] * 0.6  # 均线权重0.6
+            confidence_factors.append(ma_factor['confidence'])
+            
+            # 4. 布林带因子分析
+            bollinger_factor = self._calculate_bollinger_factor(bollinger, price)
+            signal_score += bollinger_factor['score'] * 0.7  # 布林带权重0.7
+            confidence_factors.append(bollinger_factor['confidence'])
+            
+            # 5. 成交量因子分析
+            volume_factor = self._calculate_volume_factor(volume_ratio)
+            signal_score += volume_factor['score'] * 0.5  # 成交量权重0.5
+            confidence_factors.append(volume_factor['confidence'])
+            
+            # 6. 支撑阻力因子分析
+            sr_factor = self._calculate_support_resistance_factor(support_resistance, price)
+            signal_score += sr_factor['score'] * 0.9  # 支撑阻力权重0.9
+            confidence_factors.append(sr_factor['confidence'])
+            
+            # 7. 市场环境识别
+            market_factor = self._calculate_market_environment_factor(market_volatility, trend_analysis)
+            signal_score += market_factor['score'] * 0.4  # 市场环境权重0.4
+            confidence_factors.append(market_factor['confidence'])
+            
+            # 计算最终信号和信心值
+            final_signal = self._determine_signal_from_score(signal_score)
+            final_confidence = self._calculate_weighted_confidence(confidence_factors, signal_score)
+            
+            # 生成详细理由
+            current_price = float(market_data.get('price', 50000.0))
+            reason = self._generate_enhanced_reason(
+                final_signal, signal_score, confidence_factors,
+                rsi, macd, ma_status, bollinger, volume_ratio,
+                support_resistance, market_volatility, price_position, current_price
+            )
+            
+            log_info(f"🤖 增强智能回退信号生成: {final_signal} (信心: {final_confidence:.2f}, 得分: {signal_score:.2f})")
             log_info(f"📊 回退理由: {reason}")
             
             return {
-                'signal': signal,
-                'confidence': confidence,
-                'reason': reason
+                'signal': final_signal,
+                'confidence': final_confidence,
+                'reason': reason,
+                'signal_score': signal_score,
+                'confidence_factors': confidence_factors
             }
             
         except Exception as e:
-            log_error(f"智能回退信号生成失败: {e}")
+            log_error(f"增强智能回退信号生成失败: {e}")
             # 极端情况下的最终回退
             return {
                 'signal': 'HOLD',
                 'confidence': 0.5,
-                'reason': '智能回退生成失败，使用保守HOLD信号'
+                'reason': '增强智能回退生成失败，使用保守HOLD信号',
+                'signal_score': 0.0,
+                'confidence_factors': []
             }
+    
+    def _calculate_rsi_factor(self, rsi: float, price_position: float) -> Dict[str, Any]:
+        """计算RSI因子"""
+        try:
+            # RSI信号得分
+            if rsi < 30:  # 超卖
+                rsi_score = -0.8  # 买入信号为负分
+                confidence = 0.8
+            elif rsi > 70:  # 超买
+                rsi_score = 0.8  # 卖出信号为正分
+                confidence = 0.8
+            elif 30 <= rsi <= 40:  # 弱势
+                rsi_score = -0.4
+                confidence = 0.6
+            elif 60 <= rsi <= 70:  # 强势
+                rsi_score = 0.4
+                confidence = 0.6
+            else:  # 中性
+                rsi_score = 0.0
+                confidence = 0.4
+            
+            # 结合价格位置调整
+            if price_position < 30 and rsi < 40:  # 低位+弱势
+                rsi_score *= 1.2
+                confidence *= 1.1
+            elif price_position > 70 and rsi > 60:  # 高位+强势
+                rsi_score *= 1.2
+                confidence *= 1.1
+            
+            return {
+                'score': rsi_score,
+                'confidence': confidence,
+                'factor_name': 'RSI'
+            }
+            
+        except Exception as e:
+            log_error(f"RSI因子计算失败: {e}")
+            return {'score': 0.0, 'confidence': 0.3, 'factor_name': 'RSI'}
+    
+    def _calculate_macd_factor(self, macd: Dict[str, Any]) -> Dict[str, Any]:
+        """计算MACD因子"""
+        try:
+            if not macd or not isinstance(macd, dict):
+                return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'MACD'}
+            
+            # 获取MACD数据
+            macd_line = float(macd.get('macd', 0))
+            signal_line = float(macd.get('signal', 0))
+            histogram = float(macd.get('histogram', 0))
+            
+            score = 0.0
+            confidence = 0.6
+            
+            # MACD金叉/死叉判断
+            if macd_line > signal_line and macd_line > 0:  # 金叉且在零轴上方
+                score = 0.7  # 强势买入信号
+                confidence = 0.8
+            elif macd_line < signal_line and macd_line < 0:  # 死叉且在零轴下方
+                score = -0.7  # 强势卖出信号
+                confidence = 0.8
+            elif macd_line > signal_line and macd_line < 0:  # 金叉但在零轴下方
+                score = -0.3  # 弱势买入信号
+                confidence = 0.5
+            elif macd_line < signal_line and macd_line > 0:  # 死叉但在零轴上方
+                score = 0.3  # 弱势卖出信号
+                confidence = 0.5
+            
+            # 柱状图强度调整
+            if abs(histogram) > 0:
+                histogram_strength = min(abs(histogram) / 100, 1.0)  # 标准化
+                score *= (1 + histogram_strength * 0.3)  # 最多增强30%
+                confidence *= (1 + histogram_strength * 0.2)
+            
+            return {
+                'score': score,
+                'confidence': confidence,
+                'factor_name': 'MACD'
+            }
+            
+        except Exception as e:
+            log_error(f"MACD因子计算失败: {e}")
+            return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'MACD'}
+    
+    def _calculate_ma_factor(self, ma_status: str) -> Dict[str, Any]:
+        """计算均线因子"""
+        try:
+            if not ma_status or not isinstance(ma_status, str):
+                return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'MA'}
+            
+            score = 0.0
+            confidence = 0.5
+            
+            # 解析均线状态
+            ma_status_lower = ma_status.lower()
+            
+            if '多头排列' in ma_status_lower or 'bullish' in ma_status_lower:
+                score = -0.6  # 买入信号
+                confidence = 0.7
+            elif '空头排列' in ma_status_lower or 'bearish' in ma_status_lower:
+                score = 0.6  # 卖出信号
+                confidence = 0.7
+            elif '震荡' in ma_status_lower or 'consolidation' in ma_status_lower:
+                score = 0.0
+                confidence = 0.3
+            elif '金叉' in ma_status_lower or 'golden cross' in ma_status_lower:
+                score = -0.8  # 强烈买入信号
+                confidence = 0.8
+            elif '死叉' in ma_status_lower or 'death cross' in ma_status_lower:
+                score = 0.8  # 强烈卖出信号
+                confidence = 0.8
+            
+            return {
+                'score': score,
+                'confidence': confidence,
+                'factor_name': 'MA'
+            }
+            
+        except Exception as e:
+            log_error(f"均线因子计算失败: {e}")
+            return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'MA'}
+    
+    def _calculate_bollinger_factor(self, bollinger: Dict[str, Any], current_price: float) -> Dict[str, Any]:
+        """计算布林带因子"""
+        try:
+            if not bollinger or not isinstance(bollinger, dict):
+                return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'Bollinger'}
+            
+            # 获取布林带数据
+            upper_band = float(bollinger.get('upper', 0))
+            lower_band = float(bollinger.get('lower', 0))
+            middle_band = float(bollinger.get('middle', 0))
+            
+            if upper_band <= lower_band or middle_band <= 0:
+                return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'Bollinger'}
+            
+            score = 0.0
+            confidence = 0.6
+            
+            # 计算价格在布林带中的位置
+            band_range = upper_band - lower_band
+            if band_range > 0:
+                price_position_in_band = (current_price - lower_band) / band_range
+                
+                # 布林带交易策略
+                if price_position_in_band < 0.2:  # 靠近下轨
+                    score = -0.7  # 买入信号
+                    confidence = 0.8
+                elif price_position_in_band > 0.8:  # 靠近上轨
+                    score = 0.7  # 卖出信号
+                    confidence = 0.8
+                elif 0.4 <= price_position_in_band <= 0.6:  # 靠近中轨
+                    score = 0.0
+                    confidence = 0.4
+                else:
+                    # 中间区域，轻微信号
+                    if price_position_in_band < 0.4:
+                        score = -0.3
+                    else:
+                        score = 0.3
+                    confidence = 0.5
+            
+            return {
+                'score': score,
+                'confidence': confidence,
+                'factor_name': 'Bollinger'
+            }
+            
+        except Exception as e:
+            log_error(f"布林带因子计算失败: {e}")
+            return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'Bollinger'}
+    
+    def _calculate_volume_factor(self, volume_ratio: float) -> Dict[str, Any]:
+        """计算成交量因子"""
+        try:
+            score = 0.0
+            confidence = 0.4
+            
+            # 成交量比率分析
+            if volume_ratio > 2.0:  # 成交量放大2倍以上
+                score = 0.0  # 中性，需要结合价格判断
+                confidence = 0.7
+            elif volume_ratio > 1.5:  # 成交量放大1.5倍以上
+                score = 0.0
+                confidence = 0.6
+            elif volume_ratio < 0.5:  # 成交量萎缩50%以上
+                score = 0.0  # 中性，市场观望
+                confidence = 0.5
+            else:
+                score = 0.0
+                confidence = 0.3
+            
+            return {
+                'score': score,
+                'confidence': confidence,
+                'factor_name': 'Volume'
+            }
+            
+        except Exception as e:
+            log_error(f"成交量因子计算失败: {e}")
+            return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'Volume'}
+    
+    def _calculate_support_resistance_factor(self, sr_data: Dict[str, Any], current_price: float) -> Dict[str, Any]:
+        """计算支撑阻力因子"""
+        try:
+            if not sr_data or not isinstance(sr_data, dict):
+                return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'SupportResistance'}
+            
+            # 获取支撑阻力位
+            support = float(sr_data.get('support', 0))
+            resistance = float(sr_data.get('resistance', 0))
+            nearest_support = float(sr_data.get('nearest_support', support))
+            nearest_resistance = float(sr_data.get('nearest_resistance', resistance))
+            
+            if support <= 0 or resistance <= 0 or support >= resistance:
+                return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'SupportResistance'}
+            
+            score = 0.0
+            confidence = 0.7
+            
+            # 计算与支撑阻力的距离
+            support_distance = abs(current_price - nearest_support) / current_price * 100
+            resistance_distance = abs(current_price - nearest_resistance) / current_price * 100
+            
+            # 支撑阻力策略
+            if support_distance < 1.0:  # 靠近支撑位（1%以内）
+                score = -0.8  # 强烈买入信号
+                confidence = 0.9
+            elif resistance_distance < 1.0:  # 靠近阻力位（1%以内）
+                score = 0.8  # 强烈卖出信号
+                confidence = 0.9
+            elif support_distance < 2.0:  # 接近支撑位（2%以内）
+                score = -0.5
+                confidence = 0.7
+            elif resistance_distance < 2.0:  # 接近阻力位（2%以内）
+                score = 0.5
+                confidence = 0.7
+            else:
+                # 在中间区域，根据相对距离给出轻微信号
+                total_range = resistance - support
+                if total_range > 0:
+                    position_in_range = (current_price - support) / total_range
+                    if position_in_range < 0.3:  # 靠近支撑
+                        score = -0.3
+                    elif position_in_range > 0.7:  # 靠近阻力
+                        score = 0.3
+            
+            return {
+                'score': score,
+                'confidence': confidence,
+                'factor_name': 'SupportResistance'
+            }
+            
+        except Exception as e:
+            log_error(f"支撑阻力因子计算失败: {e}")
+            return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'SupportResistance'}
+    
+    def _calculate_market_environment_factor(self, volatility: str, trend_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """计算市场环境因子"""
+        try:
+            score = 0.0
+            confidence = 0.5
+            
+            # 波动率分析
+            volatility_lower = str(volatility).lower()
+            if 'high' in volatility_lower or '高' in volatility_lower:
+                # 高波动市场，降低信号强度
+                confidence *= 0.8
+            elif 'low' in volatility_lower or '低' in volatility_lower:
+                # 低波动市场，标准处理
+                confidence *= 1.0
+            else:
+                # 正常波动
+                confidence *= 0.9
+            
+            # 趋势分析
+            if trend_analysis and isinstance(trend_analysis, dict):
+                overall_trend = str(trend_analysis.get('overall', 'neutral')).lower()
+                if 'bullish' in overall_trend or '上涨' in overall_trend:
+                    score = -0.2  # 轻微买入倾向
+                elif 'bearish' in overall_trend or '下跌' in overall_trend:
+                    score = 0.2  # 轻微卖出倾向
+            
+            return {
+                'score': score,
+                'confidence': confidence,
+                'factor_name': 'MarketEnvironment'
+            }
+            
+        except Exception as e:
+            log_error(f"市场环境因子计算失败: {e}")
+            return {'score': 0.0, 'confidence': 0.2, 'factor_name': 'MarketEnvironment'}
+    
+    def _determine_signal_from_score(self, signal_score: float) -> str:
+        """根据信号得分确定最终信号"""
+        try:
+            if signal_score <= -0.5:  # 强买入信号
+                return 'BUY'
+            elif signal_score >= 0.5:  # 强卖出信号
+                return 'SELL'
+            elif -0.2 <= signal_score <= 0.2:  # 中性区域
+                return 'HOLD'
+            elif signal_score < -0.2:  # 弱买入信号
+                return 'BUY'
+            else:  # 弱卖出信号
+                return 'SELL'
+                
+        except Exception as e:
+            log_error(f"信号得分转换失败: {e}")
+            return 'HOLD'
+    
+    def _calculate_weighted_confidence(self, confidence_factors: List[float], signal_score: float) -> float:
+        """计算加权信心值"""
+        try:
+            if not confidence_factors:
+                return 0.5
+            
+            # 计算加权平均信心
+            avg_confidence = sum(confidence_factors) / len(confidence_factors)
+            
+            # 基于信号强度调整信心值
+            signal_strength = abs(signal_score)
+            if signal_strength > 0.7:  # 强信号
+                confidence_multiplier = 1.1
+            elif signal_strength > 0.4:  # 中等信号
+                confidence_multiplier = 1.0
+            else:  # 弱信号
+                confidence_multiplier = 0.8
+            
+            # 基于因子一致性调整信心值
+            if confidence_factors:
+                confidence_std = (sum((c - avg_confidence) ** 2 for c in confidence_factors) / len(confidence_factors)) ** 0.5
+                if confidence_std < 0.1:  # 因子一致性高
+                    consistency_multiplier = 1.1
+                elif confidence_std < 0.2:  # 因子一致性中等
+                    consistency_multiplier = 1.0
+                else:  # 因子一致性低
+                    consistency_multiplier = 0.9
+            else:
+                consistency_multiplier = 1.0
+            
+            final_confidence = avg_confidence * confidence_multiplier * consistency_multiplier
+            
+            # 确保信心值在合理范围内
+            return max(0.3, min(0.95, final_confidence))
+            
+        except Exception as e:
+            log_error(f"加权信心值计算失败: {e}")
+            return 0.5
+    
+    def _generate_enhanced_reason(self, signal: str, signal_score: float, confidence_factors: List[float],
+                                  rsi: float, macd: Dict[str, Any], ma_status: str, bollinger: Dict[str, Any],
+                                  volume_ratio: float, support_resistance: Dict[str, Any], volatility: str,
+                                  price_position: float, current_price: float = 50000.0) -> str:
+        """生成增强的详细理由"""
+        try:
+            reason_parts = []
+            
+            # 信号概述
+            if signal == 'BUY':
+                reason_parts.append(f"多因子分析显示买入信号(得分: {signal_score:.2f})")
+            elif signal == 'SELL':
+                reason_parts.append(f"多因子分析显示卖出信号(得分: {signal_score:.2f})")
+            else:
+                reason_parts.append(f"多因子分析显示观望信号(得分: {signal_score:.2f})")
+            
+            # RSI分析
+            if rsi < 30:
+                reason_parts.append(f"RSI超卖({rsi:.1f})")
+            elif rsi > 70:
+                reason_parts.append(f"RSI超买({rsi:.1f})")
+            elif 30 <= rsi <= 70:
+                reason_parts.append(f"RSI中性({rsi:.1f})")
+            
+            # MACD分析
+            if macd and isinstance(macd, dict):
+                macd_line = float(macd.get('macd', 0))
+                signal_line = float(macd.get('signal', 0))
+                if macd_line > signal_line:
+                    reason_parts.append("MACD金叉")
+                else:
+                    reason_parts.append("MACD死叉")
+            
+            # 布林带分析
+            if bollinger and isinstance(bollinger, dict):
+                upper = float(bollinger.get('upper', 0))
+                lower = float(bollinger.get('lower', 0))
+                if upper > lower:
+                    band_position = (current_price - lower) / (upper - lower)
+                    if band_position < 0.2:
+                        reason_parts.append("价格靠近布林带下轨")
+                    elif band_position > 0.8:
+                        reason_parts.append("价格靠近布林带上轨")
+            
+            # 支撑阻力分析
+            if support_resistance and isinstance(support_resistance, dict):
+                support = float(support_resistance.get('support', 0))
+                resistance = float(support_resistance.get('resistance', 0))
+                if support > 0 and resistance > 0:
+                    support_dist = abs(current_price - support) / current_price * 100
+                    resistance_dist = abs(current_price - resistance) / current_price * 100
+                    
+                    if support_dist < 1.0:
+                        reason_parts.append("靠近支撑位")
+                    if resistance_dist < 1.0:
+                        reason_parts.append("靠近阻力位")
+            
+            # 市场环境
+            if 'high' in str(volatility).lower():
+                reason_parts.append("高波动环境")
+            elif 'low' in str(volatility).lower():
+                reason_parts.append("低波动环境")
+            
+            # 价格位置
+            if price_position < 30:
+                reason_parts.append("价格处于相对低位")
+            elif price_position > 70:
+                reason_parts.append("价格处于相对高位")
+            
+            # 信心水平
+            avg_confidence = sum(confidence_factors) / len(confidence_factors) if confidence_factors else 0.5
+            if avg_confidence > 0.7:
+                reason_parts.append("高信心水平")
+            elif avg_confidence > 0.5:
+                reason_parts.append("中等信心水平")
+            else:
+                reason_parts.append("低信心水平")
+            
+            # 组合最终理由
+            if reason_parts:
+                return "；".join(reason_parts) + "。"
+            else:
+                return "基于多因子技术分析的综合判断"
+                
+        except Exception as e:
+            log_error(f"增强理由生成失败: {e}")
+            return "基于技术指标的智能回退信号"
     
     def _analyze_signal_diversity(self, signals: List[AISignal]) -> Dict[str, Any]:
         """分析信号多样性 - 增强版，更严格的检测标准"""
@@ -874,50 +1449,43 @@ MACD: {macd}
         
         return analysis
     
-    def fuse_signals(self, signals: List[AISignal]) -> Dict[str, Any]:
-        """融合多AI信号 - 增强版，优化部分AI失败的处理"""
+    def fuse_signals(self, signals: List[AISignal], market_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """融合多AI信号 - 增强版，完善信号统计逻辑"""
         log_info(f"🔍 开始融合AI信号，共收到 {len(signals)} 个信号")
         
         # 分析信号多样性
         diversity_analysis = self._analyze_signal_diversity(signals)
         
+        # 获取配置的AI提供商总数
+        total_configured = len([p for p in ['deepseek', 'kimi', 'qwen', 'openai'] if self.providers.get(p, {}).get('api_key')])
+        
         if not signals:
-            log_warning("⚠️ 没有可用的AI信号，使用智能回退信号")
-            # 基于技术指标生成更智能的回退信号
-            smart_fallback = self._generate_smart_fallback_signal(market_data)
+            log_warning("⚠️ 没有可用的AI信号，使用增强智能回退信号")
+            # 使用增强的智能回退信号
+            smart_fallback = self._generate_smart_fallback_signal(market_data or {})
             return {
                 'signal': smart_fallback['signal'],
                 'confidence': smart_fallback['confidence'],
                 'reason': smart_fallback['reason'],
                 'providers': [],
-                'fusion_method': 'smart_fallback',
-                'fusion_analysis': {
-                    'total_providers': total_configured,
-                    'successful_providers': 0,
-                    'failed_providers': total_configured,
-                    'success_rate': 0.0,
-                    'fusion_reason': '所有AI信号获取失败，使用基于技术指标的智能回退策略'
-                }
+                'fusion_method': 'enhanced_smart_fallback',
+                'fusion_analysis': self._generate_enhanced_fusion_analysis(0, total_configured, '所有AI信号获取失败，使用多因子智能回退策略'),
+                'signal_statistics': self._generate_detailed_signal_statistics([]),
+                'diversity_analysis': diversity_analysis
             }
 
         if len(signals) == 1:
             signal = signals[0]
-            total_configured = len([p for p in ['deepseek', 'kimi', 'qwen', 'openai'] if self.providers.get(p, {}).get('api_key')])
             log_info(f"📊 单信号模式: {signal.provider} -> {signal.signal} (信心: {signal.confidence:.2f})")
             return {
                 'signal': signal.signal,
                 'confidence': signal.confidence,
                 'reason': f"{signal.provider}: {signal.reason}",
                 'providers': [signal.provider],
-                'fusion_method': 'single',
-                'fusion_analysis': {
-                    'total_providers': total_configured,
-                    'successful_providers': 1,
-                    'failed_providers': total_configured - 1,
-                    'success_rate': 1.0 / total_configured if total_configured > 0 else 1.0,
-                    'fusion_reason': f'仅{signal.provider}信号可用（成功率: {1.0/total_configured*100:.1f}%），直接使用其建议',
-                    'partial_success': True  # 单信号模式就是部分成功
-                }
+                'fusion_method': 'single_enhanced',
+                'fusion_analysis': self._generate_enhanced_fusion_analysis(1, total_configured, f'仅{signal.provider}信号可用'),
+                'signal_statistics': self._generate_detailed_signal_statistics(signals),
+                'diversity_analysis': diversity_analysis
             }
 
         # 多信号融合 - 增强版逻辑
@@ -926,7 +1494,6 @@ MACD: {macd}
         hold_votes = sum(1 for s in signals if s.signal == 'HOLD')
 
         total_signals = len(signals)
-        total_configured = len([p for p in ['deepseek', 'kimi', 'qwen', 'openai'] if self.providers.get(p, {}).get('api_key')])
 
         # 计算加权信心 - 基于实际成功信号
         buy_confidence = sum(s.confidence for s in signals if s.signal == 'BUY') / total_signals if total_signals > 0 else 0
@@ -935,7 +1502,9 @@ MACD: {macd}
 
         log_info(f"🗳️ 投票统计: BUY={buy_votes}, SELL={sell_votes}, HOLD={hold_votes}")
         log_info(f"📈 信心分布: BUY={buy_confidence:.2f}, SELL={sell_confidence:.2f}, HOLD={hold_confidence:.2f}")
-        log_info(f"📊 成功率: {total_signals}/{total_configured} ({total_signals/total_configured*100:.1f}%)")
+        
+        # 生成详细的信号统计
+        signal_statistics = self._generate_detailed_signal_statistics(signals)
 
         # 增强决策逻辑 - 考虑部分AI失败的情况
         majority_threshold = 0.6  # 60% majority threshold
@@ -997,19 +1566,9 @@ MACD: {macd}
             'confidence': confidence,
             'reason': reason,
             'providers': [s.provider for s in signals],
-            'fusion_method': 'enhanced_weighted_voting',
-            'fusion_analysis': {
-                'total_providers': total_configured,
-                'successful_providers': total_signals,
-                'failed_providers': total_configured - total_signals,
-                'success_rate': success_rate,
-                'buy_ratio': buy_ratio,
-                'sell_ratio': sell_ratio,
-                'hold_ratio': hold_ratio,
-                'max_consensus': max_ratio,
-                'fusion_reason': reason,
-                'partial_success': total_signals < total_configured  # 标记部分成功状态
-            },
+            'fusion_method': 'enhanced_multi_factor_voting',
+            'fusion_analysis': self._generate_enhanced_fusion_analysis(total_signals, total_configured, reason),
+            'signal_statistics': signal_statistics,
             'votes': {
                 'BUY': buy_votes,
                 'SELL': sell_votes,
@@ -1057,7 +1616,7 @@ MACD: {macd}
                 
                 # 重新融合调整后的信号
                 log_info(f"🔄 重新融合强制干预后的信号...")
-                return self.fuse_signals(signals)
+                return self.fuse_signals(signals, market_data)
         
         log_info(f"✅ AI信号融合完成: {final_signal} (信心: {confidence:.2f})")
         return result
@@ -1082,6 +1641,453 @@ MACD: {macd}
         except Exception as e:
             log_error(f"{provider} 异常: {e}")
             return None
+
+    def _calculate_dynamic_timeout(self, provider: str, base_config: Dict[str, Any]) -> Dict[str, Any]:
+        """计算动态调整的超时时间"""
+        try:
+            # 获取历史统计
+            stats = self.timeout_stats['provider'].get(provider, {})
+            avg_response_time = stats.get('avg_response_time', 0.0)
+            success_rate = stats.get('success_rate', 1.0)
+            timeout_count = stats.get('timeout_count', 0)
+            total_requests = stats.get('total_requests', 0)
+            
+            # 基础超时配置
+            base_timeout = base_config.copy()
+            
+            # 如果历史数据不足，使用基础配置
+            if total_requests < 5:
+                return base_timeout
+            
+            # 基于成功率调整超时时间
+            if success_rate < 0.8:  # 成功率低于80%
+                # 增加超时时间
+                multiplier = 1.2 if success_rate < 0.6 else 1.1
+                base_timeout['total_timeout'] *= multiplier
+                base_timeout['response_timeout'] *= multiplier
+                log_info(f"⏰ {provider} 成功率低({success_rate:.2f})，超时时间调整: {multiplier:.1f}x")
+            
+            elif success_rate > 0.95 and avg_response_time > 0:  # 成功率高且响应时间稳定
+                # 减少超时时间以提高效率
+                multiplier = 0.9
+                base_timeout['total_timeout'] *= multiplier
+                base_timeout['response_timeout'] *= multiplier
+                log_info(f"⏰ {provider} 性能优秀，超时时间优化: {multiplier:.1f}x")
+            
+            # 基于最近超时情况调整
+            recent_timeout_rate = timeout_count / total_requests if total_requests > 0 else 0
+            if recent_timeout_rate > 0.2:  # 最近超时率超过20%
+                base_timeout['total_timeout'] *= 1.3
+                base_timeout['retry_base_delay'] *= 1.2
+                log_info(f"⏰ {provider} 最近超时率高({recent_timeout_rate:.2f})，增加超时缓冲")
+            
+            # 确保最小超时时间
+            base_timeout['total_timeout'] = max(base_timeout['total_timeout'], 5.0)
+            base_timeout['response_timeout'] = max(base_timeout['response_timeout'], 3.0)
+            base_timeout['connection_timeout'] = max(base_timeout['connection_timeout'], 2.0)
+            
+            return base_timeout
+            
+        except Exception as e:
+            log_error(f"动态超时计算失败: {e}")
+            return base_config
+    
+    def _update_timeout_stats(self, provider: str, response_time: float, success: bool, timeout_type: str = None):
+        """更新超时统计信息"""
+        try:
+            if provider not in self.timeout_stats['provider']:
+                self.timeout_stats['provider'][provider] = {
+                    'avg_response_time': 0.0,
+                    'timeout_count': 0,
+                    'total_requests': 0,
+                    'success_rate': 1.0,
+                    'last_response_time': 0.0
+                }
+            
+            stats = self.timeout_stats['provider'][provider]
+            
+            # 更新全局统计
+            global_stats = self.timeout_stats['global']
+            global_stats['total_requests'] += 1
+            if not success:
+                global_stats['timeout_requests'] += 1
+            
+            # 更新提供商统计
+            stats['total_requests'] += 1
+            stats['last_response_time'] = response_time
+            
+            if success and response_time > 0:
+                # 更新平均响应时间（使用移动平均）
+                if stats['avg_response_time'] == 0:
+                    stats['avg_response_time'] = response_time
+                else:
+                    stats['avg_response_time'] = (stats['avg_response_time'] * 0.8) + (response_time * 0.2)
+            elif not success:
+                if timeout_type == 'timeout':
+                    stats['timeout_count'] += 1
+            
+            # 计算成功率
+            if stats['total_requests'] > 0:
+                stats['success_rate'] = (stats['total_requests'] - stats['timeout_count']) / stats['total_requests']
+                global_stats['timeout_rate'] = global_stats['timeout_requests'] / global_stats['total_requests']
+            
+            # 记录统计更新
+            log_info(f"📊 {provider} 超时统计更新: 成功率={stats['success_rate']:.2f}, 平均响应={stats['avg_response_time']:.1f}s, 总请求={stats['total_requests']}")
+            
+        except Exception as e:
+            log_error(f"超时统计更新失败: {e}")
+    
+    def _calculate_exponential_backoff(self, provider: str, attempt: int, base_delay: float) -> float:
+        """计算指数退避延迟时间"""
+        try:
+            # 基础指数退避公式: base_delay * 2^attempt + jitter
+            jitter = random.uniform(0.1, 0.5)  # 添加随机抖动避免惊群效应
+            backoff_delay = base_delay * (2 ** attempt) + jitter
+            
+            # 最大退避时间限制
+            max_backoff = 30.0  # 最大30秒
+            backoff_delay = min(backoff_delay, max_backoff)
+            
+            # 基于提供商性能调整退避策略
+            provider_stats = self.timeout_stats['provider'].get(provider, {})
+            success_rate = provider_stats.get('success_rate', 1.0)
+            
+            # 成功率低的提供商，增加退避时间
+            if success_rate < 0.7:
+                backoff_delay *= 1.5
+            
+            log_info(f"⏰ {provider} 指数退避: 第{attempt}次重试，延迟{backoff_delay:.1f}秒")
+            return backoff_delay
+            
+        except Exception as e:
+            log_error(f"指数退避计算失败: {e}")
+            return base_delay * (2 ** attempt)
+    
+    def _check_retry_cost_limit(self, provider: str) -> bool:
+        """检查重试成本是否超出限制"""
+        try:
+            # 检查每日成本限制
+            if self.retry_cost_config['current_daily_cost'] >= self.retry_cost_config['max_daily_cost']:
+                log_warning(f"⚠️ {provider} 重试成本已达每日上限({self.retry_cost_config['max_daily_cost']})")
+                return False
+            
+            # 计算提供商特定的成本权重
+            cost_weight = self.retry_cost_config['cost_weights'].get(provider, 1.0)
+            estimated_cost = cost_weight
+            
+            # 检查是否会超出限制
+            if self.retry_cost_config['current_daily_cost'] + estimated_cost > self.retry_cost_config['max_daily_cost']:
+                log_warning(f"⚠️ {provider} 重试成本将超出限制，拒绝重试")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            log_error(f"重试成本检查失败: {e}")
+            return False
+    
+    def _update_retry_cost(self, provider: str):
+        """更新重试成本"""
+        try:
+            cost_weight = self.retry_cost_config['cost_weights'].get(provider, 1.0)
+            self.retry_cost_config['current_daily_cost'] += cost_weight
+            
+            log_info(f"💰 重试成本更新: {provider} +{cost_weight:.1f}, 当前总计: {self.retry_cost_config['current_daily_cost']:.1f}")
+            
+        except Exception as e:
+            log_error(f"重试成本更新失败: {e}")
+
+    def _generate_enhanced_fusion_analysis(self, successful_providers: int, total_configured: int, fusion_reason: str) -> Dict[str, Any]:
+        """生成增强的融合分析统计"""
+        try:
+            # 计算修正的成功率
+            success_rate = successful_providers / total_configured if total_configured > 0 else 0.0
+            
+            # 部分成功状态判断
+            partial_success = 0 < successful_providers < total_configured
+            
+            # 成功级别分类
+            if successful_providers == 0:
+                success_level = 'complete_failure'
+            elif successful_providers == total_configured:
+                success_level = 'complete_success'
+            elif successful_providers >= total_configured * 0.75:
+                success_level = 'high_partial_success'
+            elif successful_providers >= total_configured * 0.5:
+                success_level = 'medium_partial_success'
+            elif successful_providers >= total_configured * 0.25:
+                success_level = 'low_partial_success'
+            else:
+                success_level = 'minimal_success'
+            
+            # 历史趋势分析（基于超时统计）
+            historical_trend = self._analyze_historical_success_trend()
+            
+            # 提供商性能排名
+            provider_rankings = self._rank_provider_performance()
+            
+            return {
+                'total_providers': total_configured,
+                'successful_providers': successful_providers,
+                'failed_providers': total_configured - successful_providers,
+                'success_rate': success_rate,
+                'success_rate_percentage': success_rate * 100,
+                'success_level': success_level,
+                'partial_success': partial_success,
+                'fusion_reason': fusion_reason,
+                'historical_trend': historical_trend,
+                'provider_rankings': provider_rankings,
+                'timestamp': datetime.now().isoformat(),
+                'cost_efficiency': self._calculate_cost_efficiency(successful_providers, total_configured)
+            }
+            
+        except Exception as e:
+            log_error(f"增强融合分析生成失败: {e}")
+            return {
+                'total_providers': total_configured,
+                'successful_providers': successful_providers,
+                'failed_providers': total_configured - successful_providers,
+                'success_rate': success_rate if 'success_rate' in locals() else 0.0,
+                'fusion_reason': fusion_reason,
+                'error': str(e)
+            }
+    
+    def _generate_detailed_signal_statistics(self, signals: List[AISignal]) -> Dict[str, Any]:
+        """生成详细的信号统计"""
+        try:
+            if not signals:
+                return {
+                    'total_signals': 0,
+                    'signal_distribution': {'BUY': 0, 'SELL': 0, 'HOLD': 0},
+                    'confidence_stats': {'mean': 0.0, 'std': 0.0, 'min': 0.0, 'max': 0.0},
+                    'provider_breakdown': {},
+                    'quality_score': 0.0
+                }
+            
+            # 信号分布统计
+            signal_counts = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
+            provider_breakdown = {}
+            confidences = []
+            
+            for signal in signals:
+                # 统计信号类型
+                signal_counts[signal.signal] += 1
+                
+                # 统计提供商表现
+                if signal.provider not in provider_breakdown:
+                    provider_breakdown[signal.provider] = {
+                        'signal': signal.signal,
+                        'confidence': signal.confidence,
+                        'reason': signal.reason[:100] + '...' if len(signal.reason) > 100 else signal.reason,
+                        'timestamp': signal.timestamp
+                    }
+                
+                # 收集信心值
+                confidences.append(signal.confidence)
+            
+            # 信心值统计
+            if confidences:
+                confidence_mean = sum(confidences) / len(confidences)
+                if len(confidences) > 1:
+                    variance = sum((c - confidence_mean) ** 2 for c in confidences) / len(confidences)
+                    confidence_std = variance ** 0.5
+                else:
+                    confidence_std = 0.0
+                confidence_min = min(confidences)
+                confidence_max = max(confidences)
+            else:
+                confidence_mean = confidence_std = confidence_min = confidence_max = 0.0
+            
+            # 计算信号质量评分
+            quality_score = self._calculate_signal_quality(signals, confidence_mean, confidence_std)
+            
+            return {
+                'total_signals': len(signals),
+                'signal_distribution': signal_counts,
+                'confidence_stats': {
+                    'mean': confidence_mean,
+                    'std': confidence_std,
+                    'min': confidence_min,
+                    'max': confidence_max
+                },
+                'provider_breakdown': provider_breakdown,
+                'quality_score': quality_score,
+                'diversity_index': self._calculate_diversity_index(signal_counts),
+                'consensus_level': self._calculate_consensus_level(signal_counts)
+            }
+            
+        except Exception as e:
+            log_error(f"详细信号统计生成失败: {e}")
+            return {
+                'total_signals': len(signals) if 'signals' in locals() else 0,
+                'error': str(e)
+            }
+    
+    def _analyze_historical_success_trend(self) -> Dict[str, Any]:
+        """分析历史成功率趋势"""
+        try:
+            global_stats = self.timeout_stats['global']
+            if global_stats['total_requests'] == 0:
+                return {'trend': 'no_data', 'trend_direction': 'stable', 'confidence': 0.0}
+            
+            current_success_rate = 1.0 - global_stats['timeout_rate']
+            
+            # 基于提供商统计计算趋势
+            provider_trends = []
+            for provider, stats in self.timeout_stats['provider'].items():
+                if stats['total_requests'] > 10:  # 只有足够数据的提供商才考虑
+                    provider_trends.append({
+                        'provider': provider,
+                        'success_rate': stats['success_rate'],
+                        'avg_response_time': stats['avg_response_time'],
+                        'total_requests': stats['total_requests']
+                    })
+            
+            # 计算整体趋势
+            if provider_trends:
+                avg_success_rate = sum(p['success_rate'] for p in provider_trends) / len(provider_trends)
+                if avg_success_rate > 0.8:
+                    trend_direction = 'improving'
+                elif avg_success_rate > 0.6:
+                    trend_direction = 'stable'
+                else:
+                    trend_direction = 'declining'
+                
+                trend_confidence = min(len(provider_trends) / 4, 1.0)  # 基于数据充足度
+            else:
+                trend_direction = 'stable'
+                trend_confidence = 0.0
+            
+            return {
+                'trend': f'current_success_rate: {current_success_rate:.2%}',
+                'trend_direction': trend_direction,
+                'confidence': trend_confidence,
+                'provider_trends': provider_trends
+            }
+            
+        except Exception as e:
+            log_error(f"历史趋势分析失败: {e}")
+            return {'trend': 'error', 'trend_direction': 'unknown', 'confidence': 0.0, 'error': str(e)}
+    
+    def _rank_provider_performance(self) -> List[Dict[str, Any]]:
+        """提供商性能排名"""
+        try:
+            rankings = []
+            for provider, stats in self.timeout_stats['provider'].items():
+                if stats['total_requests'] > 0:
+                    # 综合评分 = 成功率 * 0.7 + 响应速度评分 * 0.3
+                    response_score = max(0, 1.0 - (stats['avg_response_time'] / 20.0))  # 20秒为最差
+                    composite_score = stats['success_rate'] * 0.7 + response_score * 0.3
+                    
+                    rankings.append({
+                        'provider': provider,
+                        'success_rate': stats['success_rate'],
+                        'avg_response_time': stats['avg_response_time'],
+                        'total_requests': stats['total_requests'],
+                        'composite_score': composite_score,
+                        'rank': 0  # 稍后填充
+                    })
+            
+            # 按综合评分排序
+            rankings.sort(key=lambda x: x['composite_score'], reverse=True)
+            
+            # 填充排名
+            for i, ranking in enumerate(rankings):
+                ranking['rank'] = i + 1
+            
+            return rankings
+            
+        except Exception as e:
+            log_error(f"提供商性能排名失败: {e}")
+            return []
+    
+    def _calculate_signal_quality(self, signals: List[AISignal], confidence_mean: float, confidence_std: float) -> float:
+        """计算信号质量评分"""
+        try:
+            if not signals:
+                return 0.0
+            
+            # 基础质量 = 平均信心值
+            base_quality = confidence_mean
+            
+            # 一致性奖励（低标准差 = 高一致性）
+            consistency_bonus = max(0, 1.0 - confidence_std) * 0.2
+            
+            # 多样性奖励（多种信号类型）
+            unique_signals = len(set(s.signal for s in signals))
+            diversity_bonus = (unique_signals / 3.0) * 0.1
+            
+            # 提供商数量奖励
+            unique_providers = len(set(s.provider for s in signals))
+            provider_bonus = min(unique_providers / 4.0, 0.1) * 0.1
+            
+            total_quality = base_quality + consistency_bonus + diversity_bonus + provider_bonus
+            
+            return min(total_quality, 1.0)  # 确保不超过1.0
+            
+        except Exception as e:
+            log_error(f"信号质量计算失败: {e}")
+            return 0.5
+    
+    def _calculate_diversity_index(self, signal_counts: Dict[str, int]) -> float:
+        """计算信号多样性指数"""
+        try:
+            total = sum(signal_counts.values())
+            if total == 0:
+                return 0.0
+            
+            # 使用香农多样性指数
+            diversity = 0.0
+            for count in signal_counts.values():
+                if count > 0:
+                    proportion = count / total
+                    diversity -= proportion * (proportion ** 0.5)  # 简化的多样性计算
+            
+            return min(diversity * 3.0, 1.0)  # 标准化到0-1范围
+            
+        except Exception as e:
+            log_error(f"多样性指数计算失败: {e}")
+            return 0.0
+    
+    def _calculate_consensus_level(self, signal_counts: Dict[str, int]) -> float:
+        """计算共识水平"""
+        try:
+            total = sum(signal_counts.values())
+            if total == 0:
+                return 0.0
+            
+            # 找到最大共识度
+            max_count = max(signal_counts.values())
+            consensus_level = max_count / total
+            
+            return consensus_level
+            
+        except Exception as e:
+            log_error(f"共识水平计算失败: {e}")
+            return 0.0
+    
+    def _calculate_cost_efficiency(self, successful_providers: int, total_configured: int) -> float:
+        """计算成本效率"""
+        try:
+            if total_configured == 0:
+                return 0.0
+            
+            # 成功率越高，成本效率越高
+            success_rate = successful_providers / total_configured
+            
+            # 考虑重试成本
+            current_cost = self.retry_cost_config['current_daily_cost']
+            max_cost = self.retry_cost_config['max_daily_cost']
+            cost_ratio = current_cost / max_cost if max_cost > 0 else 0.0
+            
+            # 成本效率 = 成功率 * (1 - 成本比例)
+            cost_efficiency = success_rate * (1.0 - cost_ratio * 0.5)  # 成本影响权重0.5
+            
+            return max(0.0, min(1.0, cost_efficiency))
+            
+        except Exception as e:
+            log_error(f"成本效率计算失败: {e}")
+            return 0.0
 
 # 全局AI客户端实例
 ai_client = AIClient()
