@@ -185,7 +185,7 @@ class AlphaArenaBot:
     async def _get_ai_signal_async(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """异步获取AI交易信号
         
-        实现多层缓存机制，提高信号获取效率并减少API调用
+        优先获取最新的AI信号，只有在AI服务出现问题时才使用缓存
         
         Args:
             market_data: 市场数据字典
@@ -196,14 +196,8 @@ class AlphaArenaBot:
         # 增强的缓存键 - 包含更多市场特征
         cache_key = self._generate_cache_key(market_data)
         
-        # 检查多层缓存
-        cached_signal = await self._get_cached_signal(cache_key)
-        if cached_signal:
-            log_info("📊 使用缓存的AI信号")
-            return cached_signal
-        
-        # 生成新信号
-        log_info("📊 获取新的AI信号...")
+        # 优先尝试获取最新的AI信号
+        log_info("📊 优先获取最新的AI信号...")
         try:
             signal_data = await self._generate_enhanced_ai_signal(market_data)
             
@@ -214,13 +208,27 @@ class AlphaArenaBot:
             memory_manager.add_to_history('signals', signal_data)
             system_monitor.increment_counter('api_calls')
             
+            log_info("✅ 成功获取最新AI信号")
             return signal_data
             
         except Exception as e:
             log_error(f"AI信号生成失败: {type(e).__name__}: {e}")
             import traceback
             log_error(f"AI信号生成堆栈:\n{traceback.format_exc()}")
-            return await self._get_fallback_signal(market_data)
+            
+            # AI服务出现问题时，才使用缓存作为兜底
+            log_warning("⚠️ AI服务异常，尝试使用缓存信号...")
+            cached_signal = await self._get_cached_signal(cache_key)
+            if cached_signal:
+                log_info("📊 使用缓存的AI信号作为兜底")
+                # 标记这是缓存信号，降低信心度
+                cached_signal['is_cached_signal'] = True
+                cached_signal['confidence'] = max(0.3, cached_signal.get('confidence', 0.5) * 0.8)  # 降低信心度
+                cached_signal['reason'] = f"AI服务异常，使用缓存信号: {cached_signal.get('reason', '无')}"
+                return cached_signal
+            else:
+                log_warning("⚠️ 无有效缓存信号，使用兜底策略")
+                return await self._get_fallback_signal(market_data)
     
     def _generate_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """生成AI信号 - 已废弃，使用增强版本
