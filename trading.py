@@ -787,7 +787,9 @@ class OrderManager:
                     
                     # 使用交易所的实际lot size
                     if lot_size > 0:
-                        multiplier = int(round(amount / lot_size))
+                        # 修复：使用浮点数除法，避免整数除法问题
+                        multiplier_float = amount / lot_size
+                        multiplier = int(round(multiplier_float))
                         if multiplier <= 0:
                             multiplier = 1
                         

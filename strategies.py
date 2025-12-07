@@ -1765,7 +1765,8 @@ class StrategyBehaviorHandler:
         
         if hasattr(self.trading_engine, 'close_position'):
             try:
-                return self.trading_engine.close_position(side, size)
+                # 修复：close_position 方法只需要一个参数 - amount
+                return self.trading_engine.close_position(size)
             except:
                 pass
         # 模拟平仓
@@ -1787,7 +1788,8 @@ class StrategyBehaviorHandler:
         
         if hasattr(self.trading_engine, 'close_position'):
             try:
-                return self.trading_engine.close_position(side, close_size)
+                # 修复：close_position 方法只需要一个参数 - amount
+                return self.trading_engine.close_position(close_size)
             except:
                 pass
         # 模拟部分平仓
@@ -2374,7 +2376,7 @@ class StrategyBehaviorHandler:
             log_error(f"订单大小计算异常: {e}")
             return 0.001  # 默认订单大小
     
-    def _calculate_tp_sl(self, signal: str, current_price: float, market_data: Dict[str, Any], strategy_config: Dict[str, Any] = None) -> Dict[str, float]:
+    def _calculate_tp_sl(self, signal: str, current_price: float, market_data: Dict[str, Any], strategy_config: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
         """计算止盈止损"""
         try:
             # 获取策略配置
