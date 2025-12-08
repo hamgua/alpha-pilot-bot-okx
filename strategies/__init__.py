@@ -1,61 +1,60 @@
 """
-策略子包 - 市场情绪智能和自适应策略优化
-提供策略选择、回测、优化、监控等完整功能
+策略模块 - 重构版本
+提供策略选择、回测、优化、市场情绪分析等核心功能
 """
 
-from .strategies_market_sentiment_intelligence import (
-    # 基础数据结构
-    BacktestResult,
-    StrategyStatus,
-    MarketStatus,
-    OptimizationResult,
-    # 核心类
-    StateManager,
-    MarketAnalyzer,
-    StrategySelector,
-    StrategyBacktestEngine,
-    StrategyOptimizer,
-    StrategyMonitor,
-    # 全局实例
-    market_analyzer,
-    strategy_selector,
-    # 工具函数
-    run_strategy_demo,
-    quick_strategy_test
+from .base import (
+    BaseStrategy, 
+    StrategyConfig, 
+    BacktestResult, 
+    StrategySignal,
+    ConservativeStrategy,
+    ModerateStrategy, 
+    AggressiveStrategy,
+    StrategyFactory
 )
+from .selector import StrategySelector, StrategySelectorConfig
+from .optimizer import StrategyOptimizer, StrategyOptimizerConfig, OptimizationResult
+from .backtest import BacktestEngine, BacktestConfig
+from .market_sentiment import MarketSentimentAnalyzer, SentimentAnalysisResult
 
-from .strategies_adaptive_optimizer import (
-    # 核心类
-    StrategyBehaviorHandler,
-    StrategyExecutor,
-    # 全局实例
-    signal_processor,
-    strategy_executor
-)
-
-# 控制导出的名称
 __all__ = [
-    # 基础数据结构
+    # 基础策略类
+    'BaseStrategy',
+    'StrategyConfig',
     'BacktestResult',
-    'StrategyStatus', 
-    'MarketStatus',
-    'OptimizationResult',
-    # 核心类 - 市场情绪智能
-    'StateManager',
-    'MarketAnalyzer',
+    'StrategySignal',
+    'ConservativeStrategy',
+    'ModerateStrategy',
+    'AggressiveStrategy',
+    'StrategyFactory',
+    
+    # 策略选择器
     'StrategySelector',
-    'StrategyBacktestEngine',
+    'StrategySelectorConfig',
+    
+    # 策略优化器
     'StrategyOptimizer',
-    'StrategyMonitor',
-    # 核心类 - 自适应策略优化
-    'StrategyBehaviorHandler',
-    'StrategyExecutor',
+    'StrategyOptimizerConfig',
+    'OptimizationResult',
+    
+    # 回测引擎
+    'BacktestEngine',
+    'BacktestConfig',
+    
+    # 市场情绪分析
+    'MarketSentimentAnalyzer',
+    'SentimentAnalysisResult',
+    
     # 全局实例
-    'market_analyzer',
     'strategy_selector',
-    'signal_processor',
-    'strategy_executor',
-    # 工具函数
-    'run_strategy_demo',
-    'quick_strategy_test'
+    'strategy_optimizer',
+    'backtest_engine',
+    'market_sentiment_analyzer'
 ]
+
+# 全局实例
+strategy_selector = StrategySelector()
+strategy_optimizer = StrategyOptimizer()
+backtest_engine = BacktestEngine()
+market_sentiment_analyzer = MarketSentimentAnalyzer()

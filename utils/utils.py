@@ -1057,12 +1057,12 @@ class StatePersistence:
         try:
             from config import config
             self.config = config.get('system', 'state_persistence') or {}
-            self.state_dir = self.config.get('state_dir', './data/state')
+            self.state_dir = self.config.get('state_dir', './data_json/state')
             self.checkpoint_interval = self.config.get('checkpoint_interval', 300)  # 5分钟
             self.max_checkpoints = self.config.get('max_checkpoints', 10)
         except ImportError:
             # 使用默认配置
-            self.state_dir = './data/state'
+            self.state_dir = './data_json/state'
             self.checkpoint_interval = 300
             self.max_checkpoints = 10
         
@@ -1179,11 +1179,11 @@ class CheckpointManager:
         try:
             from config import config
             self.config = config.get('system', 'checkpoint_manager') or {}
-            self.checkpoint_dir = self.config.get('checkpoint_dir', './data/checkpoints')
+            self.checkpoint_dir = self.config.get('checkpoint_dir', './data_json/checkpoints')
             self.max_checkpoints = self.config.get('max_checkpoints', 5)
         except ImportError:
             # 使用默认配置
-            self.checkpoint_dir = './data/checkpoints'
+            self.checkpoint_dir = './data_json/checkpoints'
             self.max_checkpoints = 5
         
         # 确保检查点目录存在

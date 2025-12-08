@@ -7,14 +7,14 @@ import asyncio
 import aiohttp
 import json
 import time
-import random
 from typing import Dict, Any, Optional, List
 from abc import ABC, abstractmethod
 import logging
+from datetime import datetime
 
-from core.base import BaseComponent, BaseConfig, SignalData
-from core.exceptions import AIError, NetworkError, TimeoutError
-from .signals import AISignal, TimeoutConfig, RetryCostConfig
+from core.base import BaseConfig
+from core.exceptions import NetworkError, TimeoutError
+from .signals import AISignal
 from .timeout import TimeoutManager
 
 logger = logging.getLogger(__name__)
@@ -198,13 +198,21 @@ class BaseAIProvider(ABC):
                 'presence_penalty': 0.4
             }
             
+            # 设置超时时间
+            request_timeout = aiohttp.ClientTimeout(
+                total=timeout_config.get('request_timeout', 30),
+                connect=timeout_config.get('connect_timeout', 10),
+                sock_read=timeout_config.get('sock_read_timeout', 30)
+            )
+
             async with self._session.post(
                 self.config.url,
                 headers=headers,
                 json=payload,
                 ssl=True,
                 allow_redirects=True,
-                max_redirects=5
+                max_redirects=5,
+                timeout=request_timeout
             ) as response:
                 
                 if response.status == 200:
@@ -265,11 +273,20 @@ class DeepseekProvider(BaseAIProvider):
         # 简化的提示词构建，实际应该包含完整的市场分析
         price = market_data.get('price', 0)
         trend = market_data.get('trend', 'neutral')
-        
+
+        # 根据提供商添加特定提示
+        provider_hint = ""
+        if provider == "deepseek":
+            provider_hint = "作为DEEPSEEK，请以技术分析为主导，积极寻找交易机会。"
+        elif provider == "openai":
+            provider_hint = "请以稳健的分析风格，综合考虑各种因素。"
+
         return f"""
         当前BTC价格: ${price:,.2f}
         市场趋势: {trend}
-        
+
+        {provider_hint}
+
         基于技术分析，给出BUY/SELL/HOLD建议，并说明理由。
         请以JSON格式回复: {{"signal": "BUY/SELL/HOLD", "confidence": "HIGH/MEDIUM/LOW", "reason": "详细分析理由"}}
         """

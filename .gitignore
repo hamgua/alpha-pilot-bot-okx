@@ -40,7 +40,7 @@ ENV/
 # 项目数据文件
 trading_data.json
 trades_history.json
-data/
+# data/
 *.log
 
 # Streamlit缓存和配置
@@ -72,5 +72,5 @@ Thumbs.db
 *.log
 logs/
 *.csv
-data_json/*.json
+data_json/
 

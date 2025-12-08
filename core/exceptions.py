@@ -70,3 +70,9 @@ class ValidationError(TradingBotError):
     def __init__(self, message: str, field: str = None, error_code: str = "VALIDATION_ERROR", context: dict = None):
         super().__init__(message, error_code, context)
         self.field = field
+
+class TimeoutError(TradingBotError):
+    """超时异常"""
+    def __init__(self, message: str, timeout_value: float = None, error_code: str = "TIMEOUT_ERROR", context: dict = None):
+        super().__init__(message, error_code, context)
+        self.timeout_value = timeout_value

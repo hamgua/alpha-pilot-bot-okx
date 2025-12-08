@@ -27,56 +27,38 @@ from utils import (
     cache_manager, memory_manager, system_monitor,
     log_info, log_warning, log_error
 )
+from data import DataManager, DataPersistence
+from data.models import TradeRecord, MarketData, AISignal, TradeSide, OrderStatus
+
+# 全局数据管理器实例
+data_manager = DataManager()
+data_persistence = DataPersistence()
 
 # 添加缺失的工具函数
 def save_trade_record(trade_record: Dict[str, Any]) -> None:
     """保存交易记录"""
     try:
-        # 简化实现，实际应该保存到文件或数据库
+        # 创建TradeRecord对象并保存
+        trade = TradeRecord(
+            id=trade_record.get('id', f"TRADE_{datetime.now().timestamp()}"),
+            timestamp=datetime.now(),
+            symbol=trade_record.get('symbol', 'BTC/USDT'),
+            side=TradeSide(trade_record.get('side', 'long')),
+            amount=trade_record.get('amount', 0),
+            price=trade_record.get('price', 0),
+            status=OrderStatus(trade_record.get('status', 'filled')),
+            order_id=trade_record.get('order_id'),
+            filled_amount=trade_record.get('filled_amount', 0),
+            average_price=trade_record.get('average_price', 0),
+            fee=trade_record.get('fee', 0),
+            pnl=trade_record.get('pnl', 0),
+            strategy=trade_record.get('strategy'),
+            ai_confidence=trade_record.get('ai_confidence')
+        )
+        data_manager.save_trade_record(trade)
         log_info(f"交易记录已保存: {trade_record}")
     except Exception as e:
         log_error(f"保存交易记录失败: {e}")
-
-class DataManager:
-    """数据管理器（简化版本）"""
-    def __init__(self):
-        self.data = {}
-    
-    def get_data_summary(self) -> Dict[str, Any]:
-        """获取数据摘要"""
-        return {
-            'market_data': {'total_records': 100},
-            'trade_history': {'total_records': 50},
-            'ai_signals': {'total_records': 75}
-        }
-    
-    def cleanup_old_data(self, days_to_keep: int = 30) -> None:
-        """清理旧数据"""
-        log_info(f"清理超过{days_to_keep}天的旧数据")
-    
-    def save_market_data(self, data: Dict[str, Any]) -> None:
-        """保存市场数据"""
-        self.data['market_data'] = data
-    
-    def save_ai_signal(self, signal_data: Dict[str, Any]) -> None:
-        """保存AI信号"""
-        self.data['ai_signal'] = signal_data
-    
-    def save_trade_log(self, trade_record: Dict[str, Any]) -> None:
-        """保存交易日志"""
-        if 'trade_logs' not in self.data:
-            self.data['trade_logs'] = []
-        self.data['trade_logs'].append(trade_record)
-    
-    def save_system_log(self, log_entry: Dict[str, Any]) -> None:
-        """保存系统日志"""
-        if 'system_logs' not in self.data:
-            self.data['system_logs'] = []
-        self.data['system_logs'].append(log_entry)
-    
-    def save_performance_metrics(self, metrics: Dict[str, Any]) -> None:
-        """保存性能指标"""
-        self.data['performance_metrics'] = metrics
 from ai import ai
 
 @dataclass

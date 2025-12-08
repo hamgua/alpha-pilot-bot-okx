@@ -1,109 +1,176 @@
 """
-工具子包 - 提供通用工具和功能
+工具模块 - 重构版本
+提供日志、缓存、监控、错误恢复等核心工具功能
 """
 
-# 由于utils.py文件不存在，我们需要创建基本的工具函数
-# 这里定义一些基本的日志和工具函数
+# 日志系统
+from .logging import (
+    TradingLogger,
+    log_info,
+    log_warning,
+    log_error,
+    log_debug,
+    log_trade_event,
+    log_signal,
+    log_risk_event,
+    log_error_event,
+    log_performance,
+    log_decision,
+    log_ai_decision,
+    log_strategy_signal,
+    log_risk_management,
+    log_execution_stats,
+    set_log_level,
+    get_log_level,
+    rotate_logs,
+    cleanup_old_logs,
+    get_log_stats,
+    trading_logger
+)
 
-import logging
-from datetime import datetime
-from typing import Any, Dict, Optional
+# 缓存管理
+from .cache import (
+    CacheManager,
+    MemoryManager,
+    cache_manager,
+    memory_manager,
+    get_cache_stats,
+    get_memory_stats,
+    clear_all_cache,
+    clear_all_history
+)
 
-def log_info(message: str) -> None:
-    """记录信息日志"""
-    logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+# 系统监控
+from .monitoring import (
+    SystemMonitor,
+    ProcessMonitor,
+    HealthChecker,
+    system_monitor,
+    process_monitor,
+    health_checker,
+    get_system_status,
+    get_performance_summary,
+    start_system_monitoring,
+    stop_system_monitoring,
+    register_default_health_checks
+)
 
-def log_warning(message: str) -> None:
-    """记录警告日志"""
-    logging.warning(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+# 错误恢复
+from .error_recovery import (
+    ErrorCategory,
+    ErrorRecord,
+    ErrorClassifier,
+    RecoveryStrategy,
+    ErrorRecoveryManager,
+    error_recovery,
+    handle_error,
+    get_recovery_stats
+)
 
-def log_error(message: str) -> None:
-    """记录错误日志"""
-    logging.error(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+# 数据验证工具
+from .data_validation import (
+    DataValidator,
+    JSONHelper,
+    data_validator,
+    json_helper
+)
 
-# 内存管理器（简化版本）
-class MemoryManager:
-    def __init__(self):
-        self.data = {}
-    
-    def add_to_history(self, key: str, value: Any) -> None:
-        """添加到历史记录"""
-        if key not in self.data:
-            self.data[key] = []
-        self.data[key].append(value)
-        
-        # 限制历史记录长度
-        if len(self.data[key]) > 100:
-            self.data[key] = self.data[key][-100:]
-    
-    def get_history(self, key: str, limit: int = 10) -> list:
-        """获取历史记录"""
-        return self.data.get(key, [])[-limit:]
+# 时间工具
+from .time_helper import (
+    TimeHelper,
+    time_helper
+)
 
-# 缓存管理器（简化版本）
-class CacheManager:
-    def __init__(self):
-        self.cache = {}
-    
-    def get(self, key: str) -> Optional[Any]:
-        """获取缓存值"""
-        return self.cache.get(key)
-    
-    def set(self, key: str, value: Any, duration: int = 900) -> None:
-        """设置缓存值"""
-        self.cache[key] = value
-    
-    def cleanup_expired(self) -> None:
-        """清理过期缓存"""
-        # 简化实现，实际应该检查过期时间
-        if len(self.cache) > 1000:
-            # 保留最近100个
-            items = list(self.cache.items())
-            self.cache = dict(items[-100:])
+# JSON工具 (从data_validation模块导入)
+from .data_validation import (
+    JSONHelper,
+    json_helper
+)
 
-# 系统监控器（简化版本）
-class SystemMonitor:
-    def __init__(self):
-        self.counters = {
-            'api_calls': 0,
-            'trades': 0,
-            'warnings': 0,
-            'errors': 0
-        }
-        self.start_time = datetime.now()
-    
-    def increment_counter(self, counter: str) -> None:
-        """增加计数器"""
-        if counter in self.counters:
-            self.counters[counter] += 1
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """获取统计信息"""
-        uptime = (datetime.now() - self.start_time).total_seconds()
-        return {
-            'uptime_seconds': uptime,
-            'uptime_formatted': f"{uptime/3600:.1f}小时",
-            'api_calls': self.counters['api_calls'],
-            'trades': self.counters['trades'],
-            'warnings': self.counters['warnings'],
-            'errors': self.counters['errors'],
-            'error_rate': self.counters['errors'] / max(1, self.counters['api_calls']),
-            'system_health': max(0, 100 - (self.counters['errors'] * 10))
-        }
-
-# 全局实例
-memory_manager = MemoryManager()
-cache_manager = CacheManager()
-system_monitor = SystemMonitor()
+# 系统工具
+from .system_utils import (
+    SystemUtils,
+    system_utils
+)
 
 __all__ = [
+    # 日志系统
+    'TradingLogger',
     'log_info',
     'log_warning',
     'log_error',
-    'MemoryManager',
+    'log_debug',
+    'log_trade_event',
+    'log_signal',
+    'log_risk_event',
+    'log_error_event',
+    'log_performance',
+    'log_decision',
+    'log_ai_decision',
+    'log_strategy_signal',
+    'log_risk_management',
+    'log_execution_stats',
+    'set_log_level',
+    'get_log_level',
+    'rotate_logs',
+    'cleanup_old_logs',
+    'get_log_stats',
+    'trading_logger',
+    
+    # 缓存管理
     'CacheManager',
-    'SystemMonitor',
-    'memory_manager',
+    'MemoryManager',
     'cache_manager',
-    'system_monitor'
+    'memory_manager',
+    'get_cache_stats',
+    'get_memory_stats',
+    'clear_all_cache',
+    'clear_all_history',
+    
+    # 系统监控
+    'SystemMonitor',
+    'ProcessMonitor',
+    'HealthChecker',
+    'system_monitor',
+    'process_monitor',
+    'health_checker',
+    'get_system_status',
+    'get_performance_summary',
+    'start_system_monitoring',
+    'stop_system_monitoring',
+    'register_default_health_checks',
+    
+    # 错误恢复
+    'ErrorCategory',
+    'ErrorRecord',
+    'ErrorClassifier',
+    'RecoveryStrategy',
+    'ErrorRecoveryManager',
+    'error_recovery',
+    'handle_error',
+    'get_recovery_stats',
+    
+    # 数据验证
+    'DataValidator',
+    'JSONHelper',
+    'data_validator',
+    'json_helper',
+    
+    # 时间工具
+    'TimeHelper',
+    'time_helper',
+    
+    # JSON工具
+    'JSONHelper',
+    'json_helper',
+
+    # 系统工具
+    'SystemUtils',
+    'system_utils'
 ]
+
+# 全局实例
+from .logging import trading_logger
+from .cache import cache_manager, memory_manager
+from .monitoring import system_monitor, health_checker
+from .error_recovery import error_recovery
