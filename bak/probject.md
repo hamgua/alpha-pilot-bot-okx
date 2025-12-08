@@ -9,14 +9,16 @@
 ### 模块化结构
 
 ```
-alpha-arena-okx/
-├── main.py    # 主程序
+alpha-pilot-bot-okx/
+├── main.py               # 主程序
 ├── config.py             # 配置管理模块
 ├── trading.py            # 交易逻辑模块
 ├── strategies.py         # 策略模块
 ├── utils.py              # 工具模块
 ├── run.py                # 启动脚本
 ├── ai_client.py          # AI客户端
+├── streamlit_app.py      # web 页面
+├── syntax_check.py       # 语法检测
 └── README.md             # 项目文档
 ```
 

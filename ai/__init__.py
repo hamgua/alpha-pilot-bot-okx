@@ -1,17 +1,19 @@
 """
-AI子包 - 高级AI决策引擎
-提供AI信号获取和融合的完整功能
+AI决策模块 - 重构版本
+提供多AI提供商支持和智能信号融合
 """
 
-from .advanced_ai_decision_engine import (
-    AIClient,
-    AISignal,
-    ai_client
-)
+from .client import AIClient
+from .signals import AISignal, SignalFusionResult
+from .fusion import SignalFusionEngine
+from .fallback import FallbackSignalGenerator
+from .timeout import TimeoutManager
 
-# 控制导出的名称
 __all__ = [
     'AIClient',
-    'AISignal',
-    'ai_client'
+    'AISignal', 
+    'SignalFusionResult',
+    'SignalFusionEngine',
+    'FallbackSignalGenerator',
+    'TimeoutManager'
 ]
