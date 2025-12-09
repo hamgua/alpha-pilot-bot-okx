@@ -245,7 +245,8 @@ class AlphaArenaBot:
             log_error(f"AI信号获取失败: {type(e).__name__}: {e}")
             import traceback
             log_error(f"AI信号获取堆栈:\n{traceback.format_exc()}")
-            return self._get_fallback_signal_sync(market_data)
+            # 注意：这里不能直接调用异步方法，需要改为同步版本
+            return self._create_emergency_fallback_signal(market_data)
     
     async def _get_ai_signal_async(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """异步获取AI交易信号
