@@ -58,7 +58,10 @@ class BaseAIProvider(ABC):
                 interleave=None,  # 允许并行连接尝试
                 family=0,  # 自动选择IPv4/IPv6
                 local_addr=None,  # 使用系统默认本地地址
-                resolver=None  # 使用系统默认DNS解析器
+                resolver=None,  # 使用系统默认DNS解析器
+                # 新增：TCP keepalive 设置
+                socket_read_timeout=30,
+                socket_connect_timeout=15
             )
             
             timeout_config = self.timeout_manager.get_timeout_config(self.config.name)
@@ -197,12 +200,26 @@ class BaseAIProvider(ABC):
                     from .rate_limiter import rate_limiter
                     rate_limiter.record_request_result(self.config.name, False, 0)
 
-                    logger.error(f"{self.config.name} 异常: {e}")
-                    if attempt < max_retries:
-                        retry_delay = self.timeout_manager.calculate_exponential_backoff(
-                            self.config.name, attempt, timeout_config['retry_base_delay']
-                        )
-                        await asyncio.sleep(retry_delay)
+                    # 特殊处理连接重置错误
+                    if "Connection reset by peer" in str(e) or "Cannot connect to host" in str(e):
+                        logger.error(f"{self.config.name} 连接被重置，建议启用代理或切换提供商")
+                        # 标记提供商为不稳定
+                        self.timeout_manager.update_timeout_stats(self.config.name, 0, False, timeout_type='connection_reset')
+                        # 增加重试延迟
+                        if attempt < max_retries:
+                            retry_delay = self.timeout_manager.calculate_exponential_backoff(
+                                self.config.name, attempt, timeout_config['retry_base_delay'] * 1.5
+                            )
+                            logger.info(f"🔄 {self.config.name} 连接重置，增加重试延迟至 {retry_delay:.1f}秒")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                    else:
+                        logger.error(f"{self.config.name} 异常: {e}")
+                        if attempt < max_retries:
+                            retry_delay = self.timeout_manager.calculate_exponential_backoff(
+                                self.config.name, attempt, timeout_config['retry_base_delay']
+                            )
+                            await asyncio.sleep(retry_delay)
             
             logger.error(f"{self.config.name} 最终失败")
             return None
