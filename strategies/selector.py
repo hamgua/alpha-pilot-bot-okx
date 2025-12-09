@@ -386,6 +386,44 @@ class StrategySelector(BaseComponent):
         else:
             return '不适合'
 
+    async def generate_enhanced_fallback_signal(self, market_data: Dict[str, Any], signal_history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """生成增强兜底信号"""
+        try:
+            # 使用回退信号生成器生成增强兜底信号
+            from ai.fallback import FallbackSignalGenerator
+
+            fallback_generator = FallbackSignalGenerator()
+            await fallback_generator.initialize()
+
+            # 生成增强兜底信号
+            result = fallback_generator.generate_fallback_signal(market_data, signal_history)
+
+            # 包装成增强格式
+            return {
+                'signal': result['signal'],
+                'confidence': result['confidence'],
+                'reason': result['reason'],
+                'is_enhanced_fallback': True,
+                'fallback_type': 'strategy_selector',
+                'quality_score': result.get('quality_score', 0.5),
+                'provider': 'strategy_selector',
+                'timestamp': datetime.now().isoformat()
+            }
+
+        except Exception as e:
+            logger.error(f"策略选择器生成增强兜底信号失败: {e}")
+            # 返回默认兜底信号
+            return {
+                'signal': 'HOLD',
+                'confidence': 0.3,
+                'reason': '策略选择器兜底信号生成失败',
+                'is_enhanced_fallback': False,
+                'fallback_type': 'error',
+                'quality_score': 0.0,
+                'provider': 'strategy_selector',
+                'timestamp': datetime.now().isoformat()
+            }
+
     async def process_signal_by_strategy(self, signal: str, market_data: Dict[str, Any],
                                        strategy_type: str, signal_data: Dict[str, Any] = None) -> bool:
         """根据策略处理信号 - 用于向后兼容"""

@@ -15,12 +15,15 @@ services:
     environment:
       # 时区上海
       TZ : Asia/Shanghai
-    healthcheck:
-      test: ["CMD", "sh", "-c", "curl -f http://localhost:8501/_stcore/health && pgrep -f 'python.*run.py'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    #healthcheck:
+    #  test: ["CMD", "sh", "-c", "curl -f http://localhost:8501/_stcore/health && pgrep -f 'python.*run.py'"]
+    #  interval: 30s
+    #  timeout: 10s
+    #  retries: 3
+    #  start_period: 60s
     logging:
       driver: "json-file"
       options:

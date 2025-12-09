@@ -2184,11 +2184,21 @@ MACD: {macd}
         except Exception as e:
             log_error(f"指数退避计算失败: {e}")
 
-    def generate_enhanced_fallback_signal(self, market_data: Dict[str, Any], signal_history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def generate_enhanced_fallback_signal(self, market_data: Dict[str, Any], signal_history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """生成增强兜底信号"""
         try:
             if hasattr(self, 'fallback_generator'):
-                return self.fallback_generator.generate_enhanced_fallback_signal(market_data, signal_history)
+                # 调用回退生成器的异步方法
+                if hasattr(self.fallback_generator, 'generate_enhanced_fallback_signal'):
+                    result = self.fallback_generator.generate_enhanced_fallback_signal(market_data, signal_history)
+                    # 检查是否需要await
+                    if inspect.iscoroutine(result):
+                        return await result
+                    else:
+                        return result
+                else:
+                    # 使用同步的回退方法
+                    return self.fallback_generator.generate_fallback_signal(market_data, signal_history)
             else:
                 # 如果没有兜底生成器，返回默认信号
                 log_warning("兜底生成器未初始化，返回默认信号")
