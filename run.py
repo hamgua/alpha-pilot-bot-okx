@@ -43,7 +43,7 @@ if WEB_ENABLED:
 # 全局进程列表
 processes = []
 
-from utils import log_info as log
+from utils.utils import log_info as log
 
 def run_trading_bot():
     """运行交易程序（重构版）"""
@@ -218,10 +218,17 @@ def check_environment():
         log(f"⚠️ 警告: 创建目录失败 - {e}")
     
     # 检查必要文件
-    required_files = ['main.py', 'config.py', 'trading.py', 'strategies.py', 'utils.py']
+    required_files = ['main.py', 'config.py', 'strategies/strategies.py', 'utils/utils.py']
     for file in required_files:
         if not Path(file).exists():
             log(f"❌ 错误: 缺少必要文件 {file}")
+            sys.exit(1)
+
+    # 检查重构后的模块
+    required_modules = ['trading', 'ai', 'data']
+    for module in required_modules:
+        if not Path(module).is_dir():
+            log(f"❌ 错误: 缺少必要模块 {module}/")
             sys.exit(1)
     
     # 检查可选文件（仅作提示，不影响启动）
@@ -278,7 +285,7 @@ def check_environment():
 def detect_version_preference():
     """检测版本偏好（始终使用重构版）"""
     # 检查重构版文件完整性
-    new_files = ['main.py', 'config.py', 'trading.py', 'strategies.py', 'utils.py']
+    new_files = ['main.py', 'config.py', 'strategies/strategies.py', 'utils/utils.py']
     new_complete = all(Path(file).exists() for file in new_files)
     
     if not new_complete:

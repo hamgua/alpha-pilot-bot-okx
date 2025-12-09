@@ -68,6 +68,7 @@ class TradeResult:
 @dataclass
 class ExchangeConfig:
     """交易所配置"""
+    exchange: str = "okx"  # 交易所名称
     api_key: str = ""
     secret: str = ""
     password: str = ""

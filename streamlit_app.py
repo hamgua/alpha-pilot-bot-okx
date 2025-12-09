@@ -242,7 +242,7 @@ from pathlib import Path
 data_dir = Path(__file__).parent / "data_json"
 data_dir.mkdir(exist_ok=True)
 
-from utils import load_trading_data_from_file, load_trades_history_from_file, load_equity_history_from_file
+from utils.utils import load_trading_data_from_file, load_trades_history_from_file, load_equity_history_from_file
 
 DATA_FILE = os.path.join(data_dir, "trading_data.json")
 TRADES_FILE = os.path.join(data_dir, "trades_history.json")

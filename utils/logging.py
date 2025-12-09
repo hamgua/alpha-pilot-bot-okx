@@ -72,7 +72,7 @@ class FileRotationHandler(logging.Handler):
     def _update_current_file(self):
         """更新当前日志文件"""
         today = datetime.now().date()
-        if today != self.current_date:
+        if today != self.current_date or self.current_file is None:
             self.current_date = today
             filename = f"trading_bot_{today.strftime('%Y%m%d')}.log"
             self.current_file = self.log_dir / filename

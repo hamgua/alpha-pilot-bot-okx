@@ -153,6 +153,154 @@ class BaseStrategy(BaseComponent):
         }
         return risk_multipliers.get(self.risk_level, 1.0)
 
+    async def validate_signal(self, signal: StrategySignal, market_data: Dict[str, Any]) -> bool:
+        """验证信号是否有效"""
+        try:
+            # 基本验证
+            if not signal or not signal.signal:
+                logger.warning("信号对象无效或信号为空")
+                return False
+
+            # 验证信号类型
+            if signal.signal not in ['BUY', 'SELL', 'HOLD']:
+                logger.warning(f"无效的信号类型: {signal.signal}")
+                return False
+
+            # 验证置信度
+            if not (0 <= signal.confidence <= 1):
+                logger.warning(f"无效的置信度: {signal.confidence}")
+                return False
+
+            # 检查策略是否启用
+            if not self.is_enabled:
+                logger.info(f"策略 {self.strategy_type} 已禁用")
+                return False
+
+            # 获取当前价格
+            current_price = market_data.get('price', 0)
+            if current_price <= 0:
+                logger.warning(f"无效的价格: {current_price}")
+                return False
+
+            # 根据策略类型进行特定验证
+            result = await self._validate_strategy_specific(signal, market_data)
+            if not result:
+                logger.info(f"策略特定验证失败: {signal.signal}")
+            return result
+
+        except Exception as e:
+            logger.error(f"验证信号失败: {e}")
+            return False
+
+    async def _validate_strategy_specific(self, signal: StrategySignal, market_data: Dict[str, Any]) -> bool:
+        """策略特定的验证逻辑 - 子类可以重写"""
+        try:
+            # 保守策略：只允许高置信度信号（HOLD信号除外）
+            if self.strategy_type == 'conservative' and signal.confidence < 0.7:
+                # HOLD信号允许低置信度，因为不触发交易
+                if signal.signal == 'HOLD':
+                    logger.info(f"保守策略接受HOLD信号（不触发交易）: 置信度={signal.confidence}")
+                else:
+                    logger.info(f"保守策略拒绝低置信度交易信号: {signal.signal} (置信度: {signal.confidence})")
+                    return False
+
+            # 检查市场数据完整性 - 放宽要求，technical_data 可选
+            if 'price' not in market_data:
+                logger.warning("市场数据缺少必要字段: price")
+                return False
+
+            # technical_data 是可选的，如果不存在则记录日志但不阻止验证
+            if 'technical_data' not in market_data:
+                logger.info("市场数据缺少 technical_data 字段，继续验证（可选字段）")
+
+            # 记录验证通过的详细信息
+            logger.info(f"信号验证通过: {signal.signal} | 策略: {self.strategy_type} | 置信度: {signal.confidence}")
+            return True
+
+        except Exception as e:
+            logger.error(f"策略特定验证失败: {e}")
+            return False
+
+    async def execute_signal(self, signal: StrategySignal, market_data: Dict[str, Any]) -> bool:
+        """执行信号"""
+        try:
+            logger.info(f"🚀 执行信号: {signal.signal} | 策略: {self.strategy_type} | 置信度: {signal.confidence:.2f}")
+
+            # 获取交易引擎
+            from trading.engine import trading_engine
+
+            if not trading_engine:
+                logger.error("❌ 交易引擎未初始化")
+                return False
+
+            # 根据信号类型执行交易
+            if signal.signal == 'BUY':
+                return await self._execute_buy_signal(signal, market_data, trading_engine)
+            elif signal.signal == 'SELL':
+                return await self._execute_sell_signal(signal, market_data, trading_engine)
+            elif signal.signal == 'HOLD':
+                logger.info("⏸️ 保持持仓，不执行交易")
+                return True
+            else:
+                logger.error(f"❌ 无效的信号类型: {signal.signal}")
+                return False
+
+        except Exception as e:
+            logger.error(f"执行信号失败: {e}")
+            return False
+
+    async def _execute_buy_signal(self, signal: StrategySignal, market_data: Dict[str, Any], trading_engine) -> bool:
+        """执行买入信号"""
+        try:
+            # 准备信号数据
+            signal_data = {
+                'signal': 'BUY',
+                'confidence': signal.confidence,
+                'reason': signal.reason,
+                'strategy': signal.strategy_name,
+                'timestamp': signal.timestamp.isoformat()
+            }
+
+            # 使用交易引擎处理信号
+            result = await trading_engine.process_signal(signal_data, market_data)
+
+            if result.get('success', False):
+                logger.info(f"✅ 买入信号执行成功: {result}")
+                return True
+            else:
+                logger.error(f"❌ 买入信号执行失败: {result.get('error', '未知错误')}")
+                return False
+
+        except Exception as e:
+            logger.error(f"执行买入信号失败: {e}")
+            return False
+
+    async def _execute_sell_signal(self, signal: StrategySignal, market_data: Dict[str, Any], trading_engine) -> bool:
+        """执行卖出信号"""
+        try:
+            # 准备信号数据
+            signal_data = {
+                'signal': 'SELL',
+                'confidence': signal.confidence,
+                'reason': signal.reason,
+                'strategy': signal.strategy_name,
+                'timestamp': signal.timestamp.isoformat()
+            }
+
+            # 使用交易引擎处理信号
+            result = await trading_engine.process_signal(signal_data, market_data)
+
+            if result.get('success', False):
+                logger.info(f"✅ 卖出信号执行成功: {result}")
+                return True
+            else:
+                logger.error(f"❌ 卖出信号执行失败: {result.get('error', '未知错误')}")
+                return False
+
+        except Exception as e:
+            logger.error(f"执行卖出信号失败: {e}")
+            return False
+
 class ConservativeStrategy(BaseStrategy):
     """保守型策略"""
     

@@ -9,14 +9,36 @@ import json
 import time
 import traceback
 import random
+import inspect
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import concurrent.futures
 from dataclasses import dataclass
 
 from config import config
-from utils import log_info, log_warning, log_error
-from strategies import generate_enhanced_fallback_signal
+from utils.utils import log_info, log_warning, log_error
+
+# 使用自定义导入器导入strategies，避免包和文件同名冲突
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from strategies.strategies_importer import get_strategies
+strategies = get_strategies()
+
+# 创建异步包装器函数
+async def generate_enhanced_fallback_signal(market_data: Dict[str, Any], signal_history=None):
+    """增强兜底信号的异步包装器"""
+    # 直接调用策略模块的异步函数
+    result = strategies.generate_enhanced_fallback_signal(market_data, signal_history)
+
+    # 检查结果是否是协程对象，如果是则等待它
+    if inspect.iscoroutine(result):
+        return await result
+    else:
+        # 如果不是协程，直接返回结果（兼容同步调用）
+        return result
+
+sys.path.pop(0)
 
 @dataclass
 class AISignal:
@@ -30,14 +52,18 @@ class AISignal:
 
 class AIClient:
     """AI客户端 - 支持多AI提供商"""
-    
+
     def __init__(self):
+        # 始终初始化，确保providers属性存在
+        self.providers = {}
+        self.provider_configs = {}
+
         # 增强超时配置 - 基于实际连接问题优化
         self.timeout_config = {
             'deepseek': {
-                'connection_timeout': 8.0,    # 增加连接超时时间
-                'response_timeout': 12.0,     # 增加响应超时时间
-                'total_timeout': 20.0,        # 增加总超时时间
+                'connection_timeout': 10.0,   # 增加连接超时时间
+                'response_timeout': 20.0,     # 增加响应超时时间
+                'total_timeout': 35.0,        # 增加总超时时间
                 'retry_base_delay': 3.0,      # 增加基础重试延迟
                 'max_retries': 3,             # 增加最大重试次数
                 'performance_score': 0.75     # 降低性能评分（基于连接问题）
@@ -92,7 +118,11 @@ class AIClient:
         }
         try:
             # 增强的AI提供商配置加载
+            log_info(f"正在加载AI配置...")
             ai_models = config.get('ai', 'models')
+            # 不记录完整的AI models配置以避免暴露API密钥
+            log_info(f"已配置 {len(ai_models)} 个AI模型")
+
             if not ai_models:
                 log_warning("AI models配置为空，使用环境变量回退")
                 # 使用环境变量作为回退
@@ -117,6 +147,7 @@ class AIClient:
             
             for provider_name, url, model in provider_configs:
                 api_key = ai_models.get(provider_name) if ai_models else None
+                log_info(f"检查 {provider_name} API密钥: {'已配置' if api_key and api_key.strip() else '未配置'}")
                 if api_key and api_key.strip():  # 确保API密钥有效且非空
                     # 存储到providers（保持兼容性）
                     self.providers[provider_name] = {
@@ -124,7 +155,7 @@ class AIClient:
                         'model': model,
                         'api_key': api_key.strip()
                     }
-                    
+
                     # 存储到provider_configs（增强配置）
                     self.provider_configs[provider_name] = {
                         'url': url,
@@ -134,16 +165,16 @@ class AIClient:
                         'max_tokens': 150,
                         'top_p': 0.9
                     }
-                    
+
                     log_info(f"✅ {provider_name} API已配置")
                 else:
                     log_warning(f"⚠️ {provider_name} API密钥未配置或无效")
                     
             log_info(f"已配置的AI提供商: {list(self.providers.keys())}")
-            
+
             if not self.providers:
                 log_warning("⚠️ 没有任何AI提供商被配置，将使用回退信号模式")
-            
+
             # 初始化超时统计
             for provider in self.providers.keys():
                 self.timeout_stats['provider'][provider] = {
@@ -153,6 +184,14 @@ class AIClient:
                     'success_rate': 1.0,
                     'last_response_time': 0.0
                 }
+
+            # 初始化兜底信号生成器
+            from .fallback import FallbackSignalGenerator
+            self.fallback_generator = FallbackSignalGenerator()
+
+            # 初始化信号融合引擎
+            from .fusion import SignalFusionEngine
+            self.fusion_engine = SignalFusionEngine()
             
         except Exception as e:
             log_error(f"AI客户端初始化失败: {type(e).__name__}: {e}")
@@ -329,6 +368,12 @@ class AIClient:
                                 log_error(f"{provider} JSON解析失败: {e}")
                                 log_error(f"{provider} 响应文本: {response_text[:200]}...")
                                 return None
+                            except aiohttp.SocketTimeoutError as e:
+                                # 专门的socket超时错误处理
+                                self._update_timeout_stats(provider, 0, False, timeout_type='socket_timeout')
+                                log_error(f"{provider} Socket超时，服务器响应过慢: {e}")
+                                log_info(f"建议检查网络连接或稍后再试")
+                                return None
                             except Exception as e:
                                 log_error(f"{provider} 响应处理失败: {type(e).__name__}: {e}")
                                 import traceback
@@ -355,6 +400,13 @@ class AIClient:
                     # 专门的载荷错误处理
                     self._update_timeout_stats(provider, 0, False, timeout_type='payload_error')
                     log_error(f"{provider} 载荷错误: {type(e).__name__}: {e}")
+                    raise  # 重新抛出异常供上层处理
+
+                except aiohttp.SocketTimeoutError as e:
+                    # 专门的socket超时错误处理
+                    self._update_timeout_stats(provider, 0, False, timeout_type='socket_timeout')
+                    log_error(f"{provider} Socket超时，服务器响应过慢: {e}")
+                    log_info(f"建议：1) 检查网络连接 2) 稍后再试 3) 考虑切换其他AI提供商")
                     raise  # 重新抛出异常供上层处理
                     
                 except Exception as e:
@@ -2128,10 +2180,34 @@ MACD: {macd}
             
             log_info(f"⏰ {provider} 指数退避: 第{attempt}次重试，延迟{backoff_delay:.1f}秒")
             return backoff_delay
-            
+
         except Exception as e:
             log_error(f"指数退避计算失败: {e}")
-            return base_delay * (2 ** attempt)
+
+    def generate_enhanced_fallback_signal(self, market_data: Dict[str, Any], signal_history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """生成增强兜底信号"""
+        try:
+            if hasattr(self, 'fallback_generator'):
+                return self.fallback_generator.generate_enhanced_fallback_signal(market_data, signal_history)
+            else:
+                # 如果没有兜底生成器，返回默认信号
+                log_warning("兜底生成器未初始化，返回默认信号")
+                return {
+                    'signal': 'HOLD',
+                    'confidence': 0.5,
+                    'reason': '兜底生成器未初始化',
+                    'provider': 'fallback',
+                    'timestamp': datetime.now().isoformat()
+                }
+        except Exception as e:
+            log_error(f"生成增强兜底信号失败: {e}")
+            return {
+                'signal': 'HOLD',
+                'confidence': 0.3,
+                'reason': f'兜底信号生成失败: {e}',
+                'provider': 'fallback',
+                'timestamp': datetime.now().isoformat()
+            }
     
     def _check_retry_cost_limit(self, provider: str) -> bool:
         """检查重试成本是否超出限制"""

@@ -5,13 +5,13 @@ Alpha Pilot Bot OKX - 简化API包
 
 # 从子包导入主要功能，提供简化的API接口
 from ai import ai, AIClient, AISignal
-from trading import trading_engine, TradingEngine, ExchangeManager
-from strategies import (
+from trading.trading import trading_engine, TradingEngine, ExchangeManager
+from strategies.strategies import (
     StrategySelector, StrategyExecutor, StrategyBehaviorHandler,
     market_analyzer, signal_processor, consolidation_detector, crash_protection
 )
 from config import config
-from utils import log_info, log_warning, log_error
+from utils.utils import log_info, log_warning, log_error
 
 # 主要类导出
 __all__ = [

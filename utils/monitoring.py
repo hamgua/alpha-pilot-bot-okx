@@ -96,6 +96,20 @@ class SystemMonitor:
             logger.error(f"停止系统监控失败: {e}")
             return False
     
+    def increment_counter(self, counter_name: str, value: int = 1) -> bool:
+        """增加计数器"""
+        try:
+            with self._lock:
+                if 'counters' not in self._stats:
+                    self._stats['counters'] = {}
+                if counter_name not in self._stats['counters']:
+                    self._stats['counters'][counter_name] = 0
+                self._stats['counters'][counter_name] += value
+            return True
+        except Exception as e:
+            logger.error(f"增加计数器失败: {e}")
+            return False
+
     def _monitoring_loop(self):
         """监控循环"""
         while self.is_monitoring:

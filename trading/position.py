@@ -319,6 +319,7 @@ class PositionManager(BaseComponent):
             if not self.positions:
                 return {
                     'has_positions': False,
+                    'has_position': False,  # 向后兼容
                     'total_positions': 0,
                     'total_size': 0,
                     'total_pnl': 0,
@@ -334,6 +335,7 @@ class PositionManager(BaseComponent):
             
             return {
                 'has_positions': True,
+                'has_position': True,  # 向后兼容
                 'total_positions': len(self.positions),
                 'total_size': total_size,
                 'total_pnl': total_pnl,
@@ -345,7 +347,7 @@ class PositionManager(BaseComponent):
             
         except Exception as e:
             logger.error(f"获取仓位摘要失败: {e}")
-            return {'error': str(e)}
+            return {'error': str(e), 'has_position': False}
     
     def _get_positions_by_side(self) -> Dict[str, int]:
         """按方向统计仓位"""

@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import traceback
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import logging
@@ -20,16 +21,48 @@ from .models import TradeResult, PositionInfo
 
 logger = logging.getLogger(__name__)
 
-@dataclass
 class TradingEngineConfig(BaseConfig):
     """交易引擎配置"""
+
     def __init__(self, **kwargs):
+        # 提取交易引擎特有的参数
+        self.enable_trading = kwargs.pop('enable_trading', True)
+        self.test_mode = kwargs.pop('test_mode', False)
+        self.max_daily_trades = kwargs.pop('max_daily_trades', 50)
+        self.enable_auto_close = kwargs.pop('enable_auto_close', True)
+        self.trading_hours_only = kwargs.pop('trading_hours_only', False)
+
+        # 调用父类构造函数，只传递父类支持的参数
         super().__init__(name="TradingEngine", **kwargs)
-        self.enable_trading = kwargs.get('enable_trading', True)
-        self.test_mode = kwargs.get('test_mode', False)
-        self.max_daily_trades = kwargs.get('max_daily_trades', 50)
-        self.enable_auto_close = kwargs.get('enable_auto_close', True)
-        self.trading_hours_only = kwargs.get('trading_hours_only', False)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典 - 重写以包含自定义字段"""
+        base_dict = super().to_dict()
+        base_dict.update({
+            'enable_trading': self.enable_trading,
+            'test_mode': self.test_mode,
+            'max_daily_trades': self.max_daily_trades,
+            'enable_auto_close': self.enable_auto_close,
+            'trading_hours_only': self.trading_hours_only
+        })
+        return base_dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TradingEngineConfig':
+        """从字典创建实例 - 重写以支持自定义字段"""
+        return cls(
+            enable_trading=data.get('enable_trading', True),
+            test_mode=data.get('test_mode', False),
+            max_daily_trades=data.get('max_daily_trades', 50),
+            enable_auto_close=data.get('enable_auto_close', True),
+            trading_hours_only=data.get('trading_hours_only', False),
+            # 父类字段
+            name=data.get('name', 'TradingEngine'),
+            enabled=data.get('enabled', True),
+            timeout=data.get('timeout', 30),
+            max_retries=data.get('max_retries', 3),
+            retry_delay=data.get('retry_delay', 1)
+        )
 
 class TradingEngine(BaseComponent):
     """交易引擎主类"""
@@ -388,11 +421,11 @@ class TradingEngine(BaseComponent):
                 error_message=f"平仓失败: {e}"
             )
     
-    def get_market_data(self) -> Dict[str, Any]:
+    async def get_market_data(self) -> Dict[str, Any]:
         """获取市场数据"""
         try:
             # 从交易所获取实时数据
-            return self.exchange_manager.get_market_data()
+            return await self.exchange_manager.get_market_data()
         except Exception as e:
             logger.error(f"获取市场数据失败: {e}")
             return {'error': str(e)}
@@ -488,21 +521,81 @@ class TradingEngine(BaseComponent):
                 'largest_trade': self.engine_stats['largest_trade'],
                 'smallest_trade': self.engine_stats['smallest_trade']
             }
-            
+
             # 添加交易执行统计
             execution_summary = self.trade_executor.get_execution_summary()
-            
+
             return {
                 'engine_performance': engine_summary,
                 'execution_performance': execution_summary,
                 'uptime_hours': (datetime.now() - self.engine_stats['start_time']).total_seconds() / 3600,
                 'performance_grade': self._calculate_overall_performance_grade(engine_summary)
             }
-            
+
         except Exception as e:
             logger.error(f"获取性能摘要失败: {e}")
             return {'error': str(e)}
-    
+
+    async def get_price_history(self, timeframe: str = '15m', limit: int = 100) -> List[Dict[str, Any]]:
+        """获取历史价格数据"""
+        try:
+            logger.info(f"📊 开始获取历史价格数据: {timeframe}, 限制: {limit}")
+            logger.info(f"   交易所管理器初始化状态: {self.exchange_manager._initialized}")
+            logger.info(f"   模拟模式状态: {self.exchange_manager._is_mock_mode}")
+
+            # 如果处于模拟模式，直接调用同步版本的方法
+            if self.exchange_manager._is_mock_mode:
+                logger.info("   模拟模式：直接生成模拟数据")
+                import random
+                import time
+
+                # 使用与exchange.py中相同的模拟数据生成逻辑
+                current_time = int(time.time())
+                random.seed(current_time // 3600)
+                base_price = random.randint(95000, 105000)
+
+                formatted_data = []
+                current_timestamp = int(time.time() * 1000)
+
+                for i in range(limit):
+                    time_offset = i * 0.001
+                    price_noise = random.randint(-2000, 2000) + int(time_offset * 100)
+
+                    open_price = base_price + price_noise
+                    close_price = open_price + random.randint(-1500, 1500)
+                    high_price = max(open_price, close_price) + random.randint(100, 800)
+                    low_price = min(open_price, close_price) - random.randint(100, 800)
+                    volume = random.randint(5000, 15000)
+
+                    formatted_data.append({
+                        'timestamp': current_timestamp - i * 60000 * 15,  # 15分钟间隔
+                        'open': float(open_price),
+                        'high': float(high_price),
+                        'low': float(low_price),
+                        'close': float(close_price),
+                        'volume': float(volume)
+                    })
+
+                # 反转顺序，使最新数据在前
+                formatted_data.reverse()
+                logger.info(f"   模拟数据生成完成: {len(formatted_data)} 条")
+                return formatted_data
+
+            # 非模拟模式，直接调用异步方法
+            try:
+                result = await self.exchange_manager.fetch_ohlcv(timeframe, limit)
+                logger.info(f"   成功获取数据: {len(result)} 条")
+                return result
+            except Exception as e:
+                logger.error(f"获取历史价格数据失败: {e}")
+                logger.error(f"错误详情 - 时间框架: {timeframe}, 限制: {limit}")
+                logger.error(f"错误堆栈: {traceback.format_exc()}")
+                return []
+        except Exception as e:
+            logger.error(f"获取历史价格数据失败: {e}")
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            return []
+
     def _calculate_overall_performance_grade(self, summary: Dict[str, Any]) -> str:
         """计算整体性能等级"""
         try:

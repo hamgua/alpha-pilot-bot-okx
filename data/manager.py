@@ -170,6 +170,11 @@ class DataManager:
             bool: 是否保存成功
         """
         try:
+            # 确保传入的是MarketData对象，检查是否有timestamp属性
+            if not hasattr(market_data, 'timestamp'):
+                print(f"保存市场数据失败: 传入的不是MarketData对象，缺少timestamp属性")
+                return False
+
             self.conn.execute("""
                 INSERT OR REPLACE INTO market_data VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -196,30 +201,55 @@ class DataManager:
             print(f"保存市场数据失败: {e}")
             return False
 
-    def save_ai_signal(self, ai_signal: AISignal) -> bool:
+    def save_ai_signal(self, ai_signal) -> bool:
         """保存AI信号
 
         Args:
-            ai_signal: AI信号对象
+            ai_signal: AI信号对象或字典
 
         Returns:
             bool: 是否保存成功
         """
         try:
-            self.conn.execute("""
-                INSERT OR REPLACE INTO ai_signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                ai_signal.timestamp.isoformat(),
-                ai_signal.symbol,
-                ai_signal.signal.value,
-                ai_signal.confidence,
-                ai_signal.provider,
-                ai_signal.reasoning,
-                json.dumps(ai_signal.technical_indicators),
-                ai_signal.market_sentiment,
-                ai_signal.risk_level,
-                json.dumps(ai_signal.metadata)
-            ))
+            # 处理字典格式的AI信号
+            if isinstance(ai_signal, dict):
+                timestamp = ai_signal.get('timestamp')
+                if hasattr(timestamp, 'isoformat'):
+                    timestamp_str = timestamp.isoformat()
+                else:
+                    timestamp_str = str(timestamp)
+
+                self.conn.execute("""
+                    INSERT OR REPLACE INTO ai_signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    timestamp_str,
+                    ai_signal.get('symbol', ''),
+                    ai_signal.get('signal', ''),
+                    ai_signal.get('confidence', 0),
+                    ai_signal.get('provider', ''),
+                    ai_signal.get('reason', ''),
+                    json.dumps(ai_signal.get('technical_indicators', {})),
+                    ai_signal.get('market_sentiment', ''),
+                    ai_signal.get('risk_level', ''),
+                    json.dumps(ai_signal.get('metadata', {}))
+                ))
+            else:
+                # 处理AISignal对象格式
+                self.conn.execute("""
+                    INSERT OR REPLACE INTO ai_signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    ai_signal.timestamp.isoformat(),
+                    ai_signal.symbol,
+                    ai_signal.signal.value,
+                    ai_signal.confidence,
+                    ai_signal.provider,
+                    ai_signal.reasoning,
+                    json.dumps(ai_signal.technical_indicators),
+                    ai_signal.market_sentiment,
+                    ai_signal.risk_level,
+                    json.dumps(ai_signal.metadata)
+                ))
+
             self.conn.commit()
 
             # 更新缓存

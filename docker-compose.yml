@@ -9,7 +9,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime
       - ./alpha-pilot-bot-okx/.env:/app/.env
-      - ./alpha-pilot-bot-okx/data:/app/data
+      # - ./alpha-pilot-bot-okx/data:/app/data
       - ./alpha-pilot-bot-okx/logs:/app/logs
       - ./alpha-pilot-bot-okx/data_json:/app/data_json
     environment:

@@ -771,10 +771,39 @@ class MarketSentimentAnalyzer(BaseComponent):
                 }, indent=2, default=str)
             else:
                 return f"不支持的导出格式: {format}"
-                
+
         except Exception as e:
             logger.error(f"导出情绪数据失败: {e}")
             return f"导出失败: {e}"
+
+    def calculate_atr(self, high: list, low: list, close: list, period: int = 14) -> float:
+        """计算ATR波动率"""
+        try:
+            if len(high) < period or len(low) < period or len(close) < period:
+                return 2.0
+
+            import numpy as np
+
+            # 转换为numpy数组并取最近period个数据
+            high_arr = np.array(high[-period:])
+            low_arr = np.array(low[-period:])
+            close_arr = np.array(close[-period:])
+
+            # 计算真实波幅(TR)
+            tr = np.maximum(high_arr - low_arr,
+                           np.maximum(np.abs(high_arr - np.roll(close_arr, 1)),
+                                     np.abs(low_arr - np.roll(close_arr, 1))))
+
+            # 计算ATR（去掉第一个NaN值）
+            atr = np.mean(tr[1:])
+            current_price = close_arr[-1]
+
+            # 返回ATR百分比
+            return (atr / current_price) * 100 if current_price > 0 else 2.0
+
+        except Exception as e:
+            logger.error(f"计算ATR失败: {e}")
+            return 2.0  # 返回默认值
 
 # 全局情绪分析器实例
 market_sentiment_analyzer = MarketSentimentAnalyzer()

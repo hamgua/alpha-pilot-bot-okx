@@ -386,5 +386,59 @@ class StrategySelector(BaseComponent):
         else:
             return '不适合'
 
+    async def process_signal_by_strategy(self, signal: str, market_data: Dict[str, Any],
+                                       strategy_type: str, signal_data: Dict[str, Any] = None) -> bool:
+        """根据策略处理信号 - 用于向后兼容"""
+        try:
+            logger.info(f"📡 处理信号: {signal} | 策略: {strategy_type}")
+
+            # 确保当前策略匹配请求的策略类型
+            if self.get_current_strategy_type() != strategy_type:
+                await self.switch_strategy(strategy_type)
+
+            if not self.current_strategy:
+                logger.error("❌ 没有可用的策略")
+                return False
+
+            # 生成策略信号
+            from datetime import datetime
+            # 确保信号是大写的
+            signal_upper = signal.upper()
+            strategy_signal = StrategySignal(
+                signal=signal_upper,
+                confidence=signal_data.get('confidence', 0.8) if signal_data else 0.8,
+                reason=signal_data.get('reason', '策略信号') if signal_data else '策略信号',
+                strategy_name=strategy_type,
+                timestamp=datetime.now()
+            )
+
+            # 验证信号
+            logger.info(f"🔍 开始验证信号: {signal_upper} | 策略: {self.current_strategy.strategy_type} | 置信度: {strategy_signal.confidence}")
+            logger.info(f"市场数据字段: {list(market_data.keys())}")
+            is_valid = await self.current_strategy.validate_signal(strategy_signal, market_data)
+            if not is_valid:
+                logger.warning(f"⚠️ 信号验证失败: {signal} (原始信号: {signal_upper})")
+                return False
+            logger.info(f"✅ 信号验证通过: {signal_upper}")
+
+            # 执行信号
+            result = await self.current_strategy.execute_signal(strategy_signal, market_data)
+
+            if result:
+                logger.info(f"✅ 信号执行成功: {signal}")
+                # 更新性能缓存
+                self.update_performance_cache(strategy_type, 1.0)
+                return True
+            else:
+                logger.warning(f"⚠️ 信号执行失败: {signal}")
+                # 更新性能缓存
+                current_performance = self.performance_cache.get(strategy_type, 0.5)
+                self.update_performance_cache(strategy_type, current_performance * 0.95)
+                return False
+
+        except Exception as e:
+            logger.error(f"处理信号失败: {e}")
+            return False
+
 # 全局策略选择器实例
 strategy_selector = StrategySelector()
