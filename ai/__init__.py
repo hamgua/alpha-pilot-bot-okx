@@ -8,6 +8,8 @@ from .signals import AISignal, SignalFusionResult
 from .fusion import SignalFusionEngine
 from .fallback import FallbackSignalGenerator
 from .timeout import TimeoutManager
+from .proxy import ProxyManager, create_proxy_session, get_proxy_recommendations
+from .rate_limiter import RateLimitManager, rate_limit, get_rate_limit_stats
 
 # 创建全局AI客户端实例
 ai_client = AIClient()
@@ -26,6 +28,12 @@ __all__ = [
     'SignalFusionEngine',
     'FallbackSignalGenerator',
     'TimeoutManager',
+    'ProxyManager',
+    'create_proxy_session',
+    'get_proxy_recommendations',
+    'RateLimitManager',
+    'rate_limit',
+    'get_rate_limit_stats',
     'ai_client',
     'providers',
     'get_ai_signal',

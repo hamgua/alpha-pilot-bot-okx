@@ -16,6 +16,9 @@ from core.base import BaseConfig
 from core.exceptions import NetworkError, TimeoutError
 from .signals import AISignal
 from .timeout import TimeoutManager
+from .cache import ai_request_cache
+from .proxy import create_proxy_session
+from .rate_limiter import rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +44,21 @@ class BaseAIProvider(ABC):
     async def initialize(self) -> bool:
         """初始化提供商"""
         try:
+            # 增强的连接池配置
             connector = aiohttp.TCPConnector(
-                limit=30,
-                limit_per_host=10,
-                ttl_dns_cache=300,
+                limit=50,  # 增加总连接数
+                limit_per_host=20,  # 增加单主机连接数
+                ttl_dns_cache=600,  # 增加DNS缓存时间
                 use_dns_cache=True,
-                keepalive_timeout=30,
-                enable_cleanup_closed=True
+                keepalive_timeout=60,  # 增加keepalive时间
+                enable_cleanup_closed=True,
+                force_close=False,  # 保持连接复用
+                ssl=False,  # 使用系统默认SSL设置
+                happy_eyeballs_delay=0.25,  # 启用Happy Eyeballs，支持IPv6
+                interleave=None,  # 允许并行连接尝试
+                family=0,  # 自动选择IPv4/IPv6
+                local_addr=None,  # 使用系统默认本地地址
+                resolver=None  # 使用系统默认DNS解析器
             )
             
             timeout_config = self.timeout_manager.get_timeout_config(self.config.name)
@@ -59,7 +70,17 @@ class BaseAIProvider(ABC):
                     sock_read=timeout_config['response_timeout']
                 )
             )
-            
+
+            # 添加代理支持
+            try:
+                from config import config
+                if config.get('ai', 'use_proxy', False):
+                    create_proxy_session(self._session)
+                    logger.info(f"✅ {self.config.name} 代理支持已启用")
+            except:
+                # 配置不存在时静默跳过
+                pass
+
             logger.info(f"✅ {self.config.name} AI提供商初始化完成")
             return True
             
@@ -109,14 +130,22 @@ class BaseAIProvider(ABC):
                     if attempt > 0 and not self.timeout_manager.check_retry_cost_limit(self.config.name):
                         logger.warning(f"⚠️ {self.config.name} 重试成本超出限制，停止重试")
                         break
-                    
+
                     # 更新重试成本
                     if attempt > 0:
                         self.timeout_manager.update_retry_cost(self.config.name)
-                    
+
+                    # 检查限流
+                    from .rate_limiter import rate_limiter
+                    if not await rate_limiter.wait_for_permission(self.config.name):
+                        logger.warning(f"⚠️ {self.config.name} 限流检查失败，跳过请求")
+                        if attempt < max_retries:
+                            await asyncio.sleep(1)
+                        continue
+
                     # 记录请求开始时间
                     request_start_time = time.time()
-                    
+
                     # 发送请求
                     response_data = await self._send_request(prompt, system_prompt, timeout_config)
                     
@@ -126,7 +155,11 @@ class BaseAIProvider(ABC):
                     if response_data:
                         # 更新超时统计
                         self.timeout_manager.update_timeout_stats(self.config.name, response_time, True)
-                        
+
+                        # 记录限流统计
+                        from .rate_limiter import rate_limiter
+                        rate_limiter.record_request_result(self.config.name, True, response_time)
+
                         # 解析响应
                         signal = self.parse_response(response_data)
                         if signal:
@@ -144,16 +177,26 @@ class BaseAIProvider(ABC):
                 except asyncio.TimeoutError:
                     # 记录超时统计
                     self.timeout_manager.update_timeout_stats(self.config.name, 0, False, timeout_type='timeout')
+
+                    # 记录限流统计（失败）
+                    from .rate_limiter import rate_limiter
+                    rate_limiter.record_request_result(self.config.name, False, 0)
+
                     logger.error(f"{self.config.name} 请求超时（动态超时）")
                     if attempt < max_retries:
                         retry_delay = self.timeout_manager.calculate_exponential_backoff(
                             self.config.name, attempt, timeout_config['retry_base_delay']
                         )
                         await asyncio.sleep(retry_delay)
-                        
+
                 except Exception as e:
                     # 记录异常统计
                     self.timeout_manager.update_timeout_stats(self.config.name, 0, False, timeout_type='error')
+
+                    # 记录限流统计（失败）
+                    from .rate_limiter import rate_limiter
+                    rate_limiter.record_request_result(self.config.name, False, 0)
+
                     logger.error(f"{self.config.name} 异常: {e}")
                     if attempt < max_retries:
                         retry_delay = self.timeout_manager.calculate_exponential_backoff(
@@ -171,6 +214,25 @@ class BaseAIProvider(ABC):
     async def _send_request(self, prompt: str, system_prompt: str, timeout_config: Dict[str, float]) -> Optional[Dict[str, Any]]:
         """发送AI请求"""
         try:
+            # 检查缓存
+            cache_key_data = {
+                'prompt': prompt,
+                'system_prompt': system_prompt,
+                'model': self.config.model,
+                'temperature': self.config.temperature
+            }
+
+            cached_result = ai_request_cache.get(
+                self.config.name,
+                prompt,
+                self.config.model,
+                **cache_key_data
+            )
+
+            if cached_result:
+                logger.info(f"🎯 使用缓存的AI响应: {self.config.name}")
+                return cached_result
+
             headers = {
                 'Authorization': f"Bearer {self.config.api_key}",
                 'Content-Type': 'application/json',
@@ -178,7 +240,7 @@ class BaseAIProvider(ABC):
                 'Accept': 'application/json',
                 'Connection': 'keep-alive'
             }
-            
+
             payload = {
                 'model': self.config.model,
                 'messages': [
@@ -197,7 +259,7 @@ class BaseAIProvider(ABC):
                 'frequency_penalty': 0.3,
                 'presence_penalty': 0.4
             }
-            
+
             # 设置超时时间
             request_timeout = aiohttp.ClientTimeout(
                 total=timeout_config.get('request_timeout', 30),
@@ -227,7 +289,17 @@ class BaseAIProvider(ABC):
                         if data is None:
                             logger.error(f"{self.config.name} 响应数据为None")
                             return None
-                        
+
+                        # 缓存成功的响应
+                        ai_request_cache.set(
+                            self.config.name,
+                            prompt,
+                            self.config.model,
+                            data,
+                            **cache_key_data
+                        )
+
+                        logger.info(f"💾 缓存AI响应: {self.config.name}")
                         return data
                         
                     except json.JSONDecodeError as e:

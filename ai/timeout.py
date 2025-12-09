@@ -64,39 +64,47 @@ class TimeoutManager:
         self.retry_cost_config = self._get_default_retry_cost_config()
         
     def _get_default_timeout_config(self) -> Dict[str, Dict[str, float]]:
-        """获取默认超时配置"""
+        """获取默认超时配置 - 针对不稳定网络优化"""
         return {
             'deepseek': {
-                'connection_timeout': 8.0,
-                'response_timeout': 12.0,
-                'total_timeout': 20.0,
-                'retry_base_delay': 3.0,
-                'max_retries': 3,
-                'performance_score': 0.75
+                'connection_timeout': 15.0,  # 增加连接超时
+                'response_timeout': 25.0,    # 增加响应超时
+                'total_timeout': 45.0,       # 增加总超时
+                'retry_base_delay': 5.0,     # 增加重试延迟
+                'max_retries': 2,            # 减少重试次数，避免频繁重试
+                'performance_score': 0.75,
+                'connection_pool_size': 20,  # 连接池大小
+                'keepalive_timeout': 120     # 保持连接时间
             },
             'kimi': {
-                'connection_timeout': 6.0,
-                'response_timeout': 10.0,
-                'total_timeout': 18.0,
-                'retry_base_delay': 2.5,
-                'max_retries': 3,
-                'performance_score': 0.80
+                'connection_timeout': 12.0,  # 增加连接超时
+                'response_timeout': 22.0,    # 增加响应超时
+                'total_timeout': 40.0,       # 增加总超时
+                'retry_base_delay': 4.0,     # 增加重试延迟
+                'max_retries': 2,            # 减少重试次数
+                'performance_score': 0.80,
+                'connection_pool_size': 20,
+                'keepalive_timeout': 120
             },
             'qwen': {
-                'connection_timeout': 5.0,
-                'response_timeout': 8.0,
-                'total_timeout': 15.0,
-                'retry_base_delay': 2.0,
-                'max_retries': 3,
-                'performance_score': 0.85
+                'connection_timeout': 10.0,  # 增加连接超时
+                'response_timeout': 20.0,    # 增加响应超时
+                'total_timeout': 35.0,       # 增加总超时
+                'retry_base_delay': 3.5,     # 增加重试延迟
+                'max_retries': 2,            # 减少重试次数
+                'performance_score': 0.85,
+                'connection_pool_size': 20,
+                'keepalive_timeout': 120
             },
             'openai': {
-                'connection_timeout': 10.0,
-                'response_timeout': 15.0,
-                'total_timeout': 25.0,
-                'retry_base_delay': 4.0,
-                'max_retries': 2,
-                'performance_score': 0.70
+                'connection_timeout': 18.0,  # 增加连接超时
+                'response_timeout': 30.0,    # 增加响应超时
+                'total_timeout': 50.0,       # 增加总超时
+                'retry_base_delay': 6.0,     # 增加重试延迟
+                'max_retries': 1,            # 减少重试次数
+                'performance_score': 0.70,
+                'connection_pool_size': 20,
+                'keepalive_timeout': 120
             }
         }
     
