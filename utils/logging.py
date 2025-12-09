@@ -74,14 +74,14 @@ class FileRotationHandler(logging.Handler):
         today = datetime.now().date()
         if today != self.current_date or self.current_file is None:
             self.current_date = today
-            filename = f"trading_bot_{today.strftime('%Y%m%d')}.log"
+            filename = f"alpha-pilot-bot-okx-{today.strftime('%Y%m%d')}.log"
             self.current_file = self.log_dir / filename
             self._cleanup_old_files()
     
     def _cleanup_old_files(self):
         """清理旧日志文件"""
         try:
-            log_files = sorted(self.log_dir.glob("trading_bot_*.log"))
+            log_files = sorted(self.log_dir.glob("alpha-pilot-bot-okx-*.log"))
             if len(log_files) > self.max_files:
                 for old_file in log_files[:-self.max_files]:
                     try:
@@ -205,9 +205,9 @@ class TradingLogger:
     def get_log_stats(self) -> Dict[str, Any]:
         """获取日志统计"""
         try:
-            log_files = list(self.log_dir.glob("trading_bot_*.log"))
+            log_files = list(self.log_dir.glob("alpha-pilot-bot-okx-*.log"))
             total_size = sum(f.stat().st_size for f in log_files)
-            
+
             return {
                 'total_log_files': len(log_files),
                 'total_size_bytes': total_size,
