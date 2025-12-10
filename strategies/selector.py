@@ -38,14 +38,28 @@ class StrategySelector(BaseComponent):
         try:
             # 优先从环境变量读取
             env_strategy = os.getenv('INVESTMENT_TYPE', '').lower()
+            investment_type_value = os.getenv('INVESTMENT_TYPE', '未设置')
+
+            logger.info(f"📊 INVESTMENT_TYPE 当前设置: {investment_type_value}")
+
             if env_strategy in StrategyFactory.get_available_strategies():
                 self.current_strategy = StrategyFactory.create_strategy(env_strategy)
                 logger.info(f"✅ 使用环境变量策略: {env_strategy}")
+                logger.info(f"💡 投资策略说明:")
+                if env_strategy == 'conservative':
+                    logger.info(f"   - 稳健型策略（最低风险）")
+                    logger.info(f"   - 适合保守型投资者")
+                elif env_strategy == 'moderate':
+                    logger.info(f"   - 中等型策略（平衡风险收益）")
+                    logger.info(f"   - 适合稳健型投资者")
+                elif env_strategy == 'aggressive':
+                    logger.info(f"   - 激进型策略（高风险高收益）")
+                    logger.info(f"   - 适合激进型投资者")
             else:
                 # 使用配置文件
                 self.current_strategy = StrategyFactory.create_strategy(self.config.default_strategy)
                 logger.info(f"✅ 使用默认策略: {self.config.default_strategy}")
-                
+
         except Exception as e:
             logger.error(f"初始化默认策略失败: {e}")
             # 回退到保守策略
