@@ -97,7 +97,7 @@ class ConfigManager:
         return {
             'test_mode': os.getenv('TEST_MODE', 'true').lower() == 'true',  # 测试模式 - true为模拟交易，false为真实交易
             'max_position_size': float(os.getenv('MAX_POSITION_SIZE', '0.01')),  # 最大持仓量 - 最多持有的BTC数量
-            'min_trade_amount': float(os.getenv('MIN_TRADE_AMOUNT', '0.001')),  # 最小交易量 - 每次交易的最小BTC数量
+            'min_trade_amount': float(os.getenv('MIN_TRADE_AMOUNT', '0.0005')),  # 降低最小交易量到0.0005，允许低信心信号交易
             'leverage': int(os.getenv('LEVERAGE', '10')),  # 杠杆倍数 - 10倍杠杆（谨慎调整）
             'cycle_minutes': int(os.getenv('CYCLE_MINUTES', '15')),  # 交易周期 - 每15分钟执行一次交易检查
             'margin_mode': 'cross',  # 保证金模式 - cross为全仓，isolated为逐仓
@@ -168,7 +168,7 @@ class ConfigManager:
                     'max_consecutive_losses': 2,    # 最大连续亏损次数
                     'emergency_stop_loss': 0.025,   # 紧急止损 2.5%
                     'position_size_limits': {
-                        'min': 0.001,               # 最小仓位
+                        'min': 0.0005,              # 降低最小仓位，允许低信心交易
                         'max': 0.01,                # 最大仓位
                         'initial': 0.005            # 初始仓位
                     },

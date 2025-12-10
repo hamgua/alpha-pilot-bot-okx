@@ -175,8 +175,14 @@ class TradeExecutor(BaseComponent):
             # 2. 仓位大小计算
             if self.config.enable_position_sizing:
                 position_size = await self._calculate_position_size(signal_data, market_data, portfolio_data)
+                logger.info(f"📊 计算出的仓位大小: {position_size:.6f} BTC")
             else:
                 position_size = signal_data.get('amount', 0.001)  # 默认大小
+                logger.info(f"📊 使用默认仓位大小: {position_size:.6f} BTC")
+
+            # 检查仓位是否达到最小订单要求
+            if position_size < self.order_manager.config.min_order_size:
+                logger.warning(f"⚠️ 计算出的仓位大小 {position_size:.6f} 小于最小订单大小 {self.order_manager.config.min_order_size:.6f}，可能无法执行交易")
             
             # 3. 价格确定
             execution_price = await self._determine_execution_price(signal, market_data)

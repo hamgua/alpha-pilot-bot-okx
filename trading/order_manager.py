@@ -50,7 +50,7 @@ class OrderConfig(BaseConfig):
     def __init__(self, **kwargs):
         super().__init__(name="OrderManager", **kwargs)
         self.max_order_size = kwargs.get('max_order_size', 0.01)
-        self.min_order_size = kwargs.get('min_order_size', 0.001)
+        self.min_order_size = kwargs.get('min_order_size', 0.0005)  # 降低最小订单大小，匹配最小交易量
         self.max_slippage = kwargs.get('max_slippage', 0.005)  # 0.5%
         self.order_timeout = kwargs.get('order_timeout', 30)
         self.retry_attempts = kwargs.get('retry_attempts', 3)
@@ -109,13 +109,16 @@ class OrderManager(BaseComponent):
         """下市价单"""
         try:
             logger.info(f"📈 准备下市价单: {side} {amount} (reduce_only={reduce_only})")
-            
+            logger.info(f"📊 订单参数 - side: {side}, amount: {amount}, min_order_size: {self.config.min_order_size}, max_order_size: {self.config.max_order_size}")
+
             # 验证订单参数
             validation_result = self._validate_order_params(side, amount)
             if not validation_result['valid']:
+                error_msg = validation_result['errors'][0]
+                logger.warning(f"⚠️ 订单验证失败: {error_msg}")
                 return OrderResult(
                     success=False,
-                    error_message=validation_result['errors'][0]
+                    error_message=error_msg
                 )
             
             # 标准化数量
