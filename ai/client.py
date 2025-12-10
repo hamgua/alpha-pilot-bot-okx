@@ -167,6 +167,9 @@ class BaseAIProvider(ABC):
                         signal = self.parse_response(response_data)
                         if signal:
                             logger.info(f"🤖 {self.config.name.upper()}回复: {signal.signal} (信心: {signal.confidence:.1f})")
+                            # 添加AI理由输出，限制长度避免日志过长
+                            reason_preview = signal.reason[:150] + "..." if len(signal.reason) > 350 else signal.reason
+                            logger.info(f"📋 {self.config.name.upper()}理由: {reason_preview}")
                             return signal
                     
                     # 如果失败且不是最后一次尝试，等待后重试
