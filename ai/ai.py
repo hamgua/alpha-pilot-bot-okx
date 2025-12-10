@@ -57,6 +57,7 @@ class AIClient:
         # 始终初始化，确保providers属性存在
         self.providers = {}
         self.provider_configs = {}
+        self.initialized = False  # 标记是否已初始化
 
         # 增强超时配置 - 基于实际连接问题优化
         self.timeout_config = {
@@ -93,7 +94,7 @@ class AIClient:
                 'performance_score': 0.70     # 降低性能评分
             }
         }
-        
+
         # 动态超时调整参数
         self.timeout_stats = {
             'provider': {},  # 各提供商的响应时间统计
@@ -104,7 +105,7 @@ class AIClient:
                 'timeout_requests': 0
             }
         }
-        
+
         # 增强重试成本控制 - 适应连接问题
         self.retry_cost_config = {
             'max_daily_cost': 150,  # 增加每日最大重试成本
@@ -116,6 +117,13 @@ class AIClient:
                 'openai': 1.8      # 增加成本权重（响应慢）
             }
         }
+
+    def initialize(self):
+        """初始化AI客户端，执行配置加载"""
+        if self.initialized:
+            log_info("AI客户端已初始化，跳过重复初始化")
+            return
+
         try:
             # 增强的AI提供商配置加载
             log_info(f"正在加载AI配置...")
@@ -133,10 +141,10 @@ class AIClient:
                     'qwen': os.getenv('QWEN_API_KEY'),
                     'openai': os.getenv('OPENAI_API_KEY')
                 }
-            
+
             self.providers = {}
             self.provider_configs = {}  # 新增独立的配置存储
-            
+
             # 增强的提供商配置构建
             provider_configs = [
                 ('deepseek', 'https://api.deepseek.com/v1/chat/completions', 'deepseek-chat'),
@@ -144,7 +152,7 @@ class AIClient:
                 ('qwen', 'https://dashscope.aliyuncs.com/compatible/v1/chat/completions', 'qwen3-max'),
                 ('openai', 'https://api.openai.com/v1/chat/completions', 'gpt-3.5-turbo')
             ]
-            
+
             for provider_name, url, model in provider_configs:
                 api_key = ai_models.get(provider_name) if ai_models else None
                 log_info(f"检查 {provider_name} API密钥: {'已配置' if api_key and api_key.strip() else '未配置'}")
@@ -169,7 +177,7 @@ class AIClient:
                     log_info(f"✅ {provider_name} API已配置")
                 else:
                     log_warning(f"⚠️ {provider_name} API密钥未配置或无效")
-                    
+
             log_info(f"已配置的AI提供商: {list(self.providers.keys())}")
 
             if not self.providers:
@@ -192,7 +200,9 @@ class AIClient:
             # 初始化信号融合引擎
             from .fusion import SignalFusionEngine
             self.fusion_engine = SignalFusionEngine()
-            
+
+            self.initialized = True
+
         except Exception as e:
             log_error(f"AI客户端初始化失败: {type(e).__name__}: {e}")
             log_error(f"初始化堆栈:\n{traceback.format_exc()}")

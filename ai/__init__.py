@@ -11,8 +11,11 @@ from .timeout import TimeoutManager
 from .proxy import ProxyManager, create_proxy_session, get_proxy_recommendations
 from .rate_limiter import MultiProviderRateLimiter, rate_limit, get_rate_limit_stats
 
-# 创建全局AI客户端实例
+# 创建全局AI客户端实例（延迟初始化）
 ai_client = AIClient()
+
+# 立即初始化一次，避免重复初始化
+ai_client.initialize()
 
 # 导出常用的函数和属性
 providers = ai_client.providers
