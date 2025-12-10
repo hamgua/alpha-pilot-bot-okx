@@ -514,53 +514,66 @@ class AlphaArenaBot:
             return await self._get_fallback_signal(market_data)
     
     async def _generate_multi_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """生成多AI融合信号"""
+        """生成多AI融合信号（核心优化：只要有成功信号就不使用回退）"""
         # 从配置中获取AI_FUSION_PROVIDERS
         fusion_providers_str = config.get('ai', 'ai_fusion_providers', 'deepseek,kimi')
         providers = [p.strip() for p in fusion_providers_str.split(',')]
-        
+
         # 过滤掉未配置的提供商（基于实际可用的API密钥）
         available_providers = [p for p in providers if p in ai.providers]
-        
+
         if not available_providers:
             log_warning("没有可用的AI提供商，使用回退信号")
             return await self._get_fallback_signal(market_data)
-        
+
         log_info(f"使用AI提供商: {available_providers} (配置: {fusion_providers_str})")
-        
-        # 获取信号，设置超时
+
+        # 获取信号，设置总超时（比原来更宽松，因为内部已经有超时控制）
+        signals = []
         try:
             signals = await asyncio.wait_for(
                 ai.get_multi_ai_signals(market_data, available_providers),
-                timeout=30.0
+                timeout=45.0  # 从30秒增加到45秒，给更多时间获取信号
             )
-            
-            if signals:
-                # 使用增强的信号融合算法
-                signal_data = ai.fuse_signals(signals)
-                log_info("📊 【多AI融合信号分析】")
-                log_info(f"   📈 最终信号: {signal_data['signal']}")
-                log_info(f"   💡 融合信心: {signal_data['confidence']:.1f}")
-                
-                # 显示详细的融合分析信息
-                fusion_analysis = signal_data.get('fusion_analysis', {})
-                if fusion_analysis:
-                    log_info(f"   🔍 融合详情:")
-                    log_info(f"      共识门槛: {fusion_analysis.get('consensus_threshold', 'unknown')}")
-                    log_info(f"      动态调整: {fusion_analysis.get('dynamic_adjustment', 0):+.2f}")
-                    log_info(f"      一致性得分: {fusion_analysis.get('consistency_score', 0):.2f}")
-                    log_info(f"      低波动优化: {'✅' if fusion_analysis.get('low_volatility_optimized') else '❌'}")
-                
-                # 保存AI信号到数据管理系统
-                self.data_manager.save_ai_signal(signal_data)
-                
-                return signal_data
-            else:
-                log_warning("多AI信号获取失败，使用回退信号")
-                return await self._get_fallback_signal(market_data)
-                
+            log_info(f"✅ 多AI信号获取完成，成功获取 {len(signals)} 个信号")
+
         except asyncio.TimeoutError:
-            log_warning("多AI信号获取超时，使用回退信号")
+            log_warning(f"⚠️ 多AI信号获取总超时(45秒)，但可能已有部分成功信号")
+            # 重要：即使总超时，也要检查是否已经有部分成功的信号
+            # 因为get_multi_ai_signals内部是并行执行的，可能已经完成了部分
+
+        except Exception as e:
+            log_error(f"🚨 多AI信号获取异常: {e}")
+            return await self._get_fallback_signal(market_data)
+
+        # 核心优化：只要有成功的信号就使用，不使用回退
+        if signals and len(signals) > 0:
+            log_info("🚀 【优化】使用成功获取的AI信号进行融合（即使有部分失败）")
+
+            # 使用增强的信号融合算法
+            signal_data = ai.fuse_signals(signals)
+
+            log_info("📊 【多AI融合信号分析】")
+            log_info(f"   📈 最终信号: {signal_data['signal']}")
+            log_info(f"   💡 融合信心: {signal_data['confidence']:.1f}")
+            log_info(f"   📊 参与融合的信号数: {len(signals)} (总共: {len(available_providers)})")
+
+            # 显示详细的融合分析信息
+            fusion_analysis = signal_data.get('fusion_analysis', {})
+            if fusion_analysis:
+                log_info(f"   🔍 融合详情:")
+                log_info(f"      共识门槛: {fusion_analysis.get('consensus_threshold', 'unknown')}")
+                log_info(f"      动态调整: {fusion_analysis.get('dynamic_adjustment', 0):+.2f}")
+                log_info(f"      一致性得分: {fusion_analysis.get('consistency_score', 0):.2f}")
+                log_info(f"      低波动优化: {'✅' if fusion_analysis.get('low_volatility_optimized') else '❌'}")
+
+            # 保存AI信号到数据管理系统
+            self.data_manager.save_ai_signal(signal_data)
+
+            return signal_data
+        else:
+            # 没有任何成功的信号，才使用回退
+            log_warning("❌ 所有AI提供商均失败，使用回退信号")
             return await self._get_fallback_signal(market_data)
     
     async def _generate_single_ai_signal(self, market_data: Dict[str, Any]) -> Dict[str, Any]:

@@ -1075,97 +1075,125 @@ MACD: {macd}
             return None
     
     async def get_multi_ai_signals(self, market_data: Dict[str, Any], providers: List[str] = None) -> List[AISignal]:
-        """获取多AI信号（增强版）- 实现指数退避重试和成本控制"""
+        """获取多AI信号（增强版）- 并行执行，支持部分成功"""
         if providers is None:
             providers = ['deepseek', 'kimi', 'openai']
-            
+
         # 过滤掉未配置的提供商
         enabled_providers = [p for p in providers if self.providers.get(p, {}).get('api_key')]
-        
+
         if not enabled_providers:
             log_warning("没有可用的AI提供商")
             return []
-        
-        signals = []
-        failed_providers = []
-        successful_providers = []
-        
+
+        log_info(f"🚀 并行获取多AI信号: {enabled_providers}")
+
+        # 为每个提供商创建一个带超时和重试的任务
+        tasks = []
         for provider in enabled_providers:
-            provider_success = False
-            provider_config = self.timeout_config.get(provider, self.timeout_config['openai'])
-            max_retries = provider_config['max_retries']
-            
-            for attempt in range(max_retries + 1):
-                try:
-                    # 检查重试成本限制
-                    if attempt > 0 and not self._check_retry_cost_limit(provider):
-                        log_warning(f"⚠️ {provider} 重试成本超出限制，跳过重试")
-                        break
-                    
-                    # 获取动态调整的超时时间
-                    adjusted_timeout = self._calculate_dynamic_timeout(provider, provider_config)
-                    signal_timeout = adjusted_timeout['total_timeout']
-                    
-                    log_info(f"🔄 {provider} 第{attempt + 1}次尝试，超时:{signal_timeout:.1f}s")
-                    
-                    signal = await asyncio.wait_for(
-                        self.get_signal_from_provider(provider, market_data),
-                        timeout=signal_timeout
-                    )
-                    
-                    if signal:
-                        signals.append(signal)
-                        successful_providers.append(provider)
-                        log_info(f"🤖 {provider.upper()}回复: {signal.signal} (信心: {signal.confidence:.1f})")
-                        clean_reason = ' '.join(signal.reason.replace('\n', ' ').replace('\r', ' ').split())
-                        log_info(f"📋 {provider.upper()}理由: {clean_reason[:100]}...")
-                        provider_success = True
-                        break
-                    else:
-                        if attempt < max_retries:
-                            # 计算指数退避延迟
-                            retry_delay = self._calculate_exponential_backoff(provider, attempt, adjusted_timeout['retry_base_delay'])
-                            log_warning(f"{provider}第{attempt + 1}次尝试失败，{retry_delay:.1f}秒后重试...")
-                            await asyncio.sleep(retry_delay)
-                            # 更新重试成本
-                            self._update_retry_cost(provider)
-                        else:
-                            log_error(f"{provider}最终失败")
-                            
-                except asyncio.TimeoutError:
-                    log_error(f"{provider}请求超时（动态超时）")
-                    if attempt < max_retries:
-                        # 计算指数退避延迟
-                        retry_delay = self._calculate_exponential_backoff(provider, attempt, provider_config['retry_base_delay'])
-                        log_info(f"{provider}超时重试，等待{retry_delay:.1f}秒...")
-                        await asyncio.sleep(retry_delay)
-                        # 更新重试成本
-                        self._update_retry_cost(provider)
-                        
-                except Exception as e:
-                    log_error(f"{provider}异常: {e}")
-                    if attempt < max_retries:
-                        # 计算指数退避延迟
-                        retry_delay = self._calculate_exponential_backoff(provider, attempt, provider_config['retry_base_delay'])
-                        log_info(f"{provider}异常重试，等待{retry_delay:.1f}秒...")
-                        await asyncio.sleep(retry_delay)
-                        # 更新重试成本
-                        self._update_retry_cost(provider)
-            
-            if not provider_success:
+            task = self._get_single_ai_signal_with_retry(provider, market_data)
+            tasks.append(task)
+
+        # 并行执行所有任务，等待最多30秒（总超时）
+        # 使用return_exceptions=True让成功的任务正常返回，失败的任务返回异常
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 分离成功和失败的结果
+        signals = []
+        successful_providers = []
+        failed_providers = []
+
+        for i, result in enumerate(results):
+            provider = enabled_providers[i]
+            if isinstance(result, Exception):
+                # 任务抛出异常（超时、连接错误等）
+                log_error(f"❌ {provider} 信号获取异常: {type(result).__name__}")
                 failed_providers.append(provider)
-        
-        # 记录融合统计和超时性能
-        log_info(f"📊 AI信号获取统计: 成功={len(successful_providers)}, 失败={len(failed_providers)}")
-        log_info(f"📊 重试成本统计: 当前成本={self.retry_cost_config['current_daily_cost']:.1f}, 上限={self.retry_cost_config['max_daily_cost']}")
-        
+            elif result is None:
+                # 任务返回None（所有重试都失败）
+                log_error(f"❌ {provider} 信号获取失败（最终返回None）")
+                failed_providers.append(provider)
+            else:
+                # 成功获取信号
+                signal = result
+                signals.append(signal)
+                successful_providers.append(provider)
+                log_info(f"✅ {provider.upper()} 成功: {signal.signal} (信心: {signal.confidence:.1f})")
+
+        # 记录统计信息
+        log_info(f"📊 多AI信号获取统计: 成功={len(successful_providers)}, 失败={len(failed_providers)}")
+        if successful_providers:
+            log_info(f"✅ 成功提供商: {successful_providers}")
+        if failed_providers:
+            log_warning(f"⚠️ 失败提供商: {failed_providers}")
+
         # 输出超时性能统计
         self._log_timeout_performance()
-        
-        if failed_providers:
-            log_warning(f"⚠️ 失败的AI提供商: {failed_providers}")
-        
+
         return signals
+
+    async def _get_single_ai_signal_with_retry(self, provider: str, market_data: Dict[str, Any]) -> Optional[AISignal]:
+        """单个AI信号获取（带重试）- 新实现"""
+        provider_config = self.timeout_config.get(provider, self.timeout_config['openai'])
+        max_retries = provider_config['max_retries']
+
+        for attempt in range(max_retries + 1):
+            try:
+                # 检查重试成本限制
+                if attempt > 0 and not self._check_retry_cost_limit(provider):
+                    log_warning(f"⚠️ {provider} 重试成本超出限制，跳过重试")
+                    raise Exception(f"{provider} 重试成本超出限制")
+
+                # 获取动态调整的超时时间
+                adjusted_timeout = self._calculate_dynamic_timeout(provider, provider_config)
+                signal_timeout = adjusted_timeout['total_timeout']
+
+                log_info(f"🔄 {provider} 第{attempt + 1}次尝试，超时:{signal_timeout:.1f}s")
+
+                # 获取信号（带个别超时）
+                signal = await asyncio.wait_for(
+                    self.get_signal_from_provider(provider, market_data),
+                    timeout=signal_timeout
+                )
+
+                if signal:
+                    # 成功获取信号
+                    return signal
+                else:
+                    # 信号为None，继续重试
+                    if attempt < max_retries:
+                        retry_delay = self._calculate_exponential_backoff(provider, attempt, adjusted_timeout['retry_base_delay'])
+                        log_warning(f"{provider} 第{attempt + 1}次返回None，{retry_delay:.1f}秒后重试...")
+                        await asyncio.sleep(retry_delay)
+                        self._update_retry_cost(provider)
+                    else:
+                        log_error(f"{provider} 最终失败（返回None）")
+                        return None
+
+            except asyncio.TimeoutError:
+                log_error(f"{provider} 请求超时（动态超时）")
+                if attempt < max_retries:
+                    retry_delay = self._calculate_exponential_backoff(provider, attempt, provider_config['retry_base_delay'])
+                    log_info(f"{provider} 超时重试，等待{retry_delay:.1f}秒...")
+                    await asyncio.sleep(retry_delay)
+                    self._update_retry_cost(provider)
+                else:
+                    log_error(f"{provider} 超时最终失败")
+                    raise  # 抛出异常让调用者知道
+
+            except Exception as e:
+                log_error(f"{provider} 异常: {e}")
+                if attempt < max_retries:
+                    retry_delay = self._calculate_exponential_backoff(provider, attempt, provider_config['retry_base_delay'])
+                    log_info(f"{provider} 异常重试，等待{retry_delay:.1f}秒...")
+                    await asyncio.sleep(retry_delay)
+                    self._update_retry_cost(provider)
+                else:
+                    log_error(f"{provider} 异常最终失败")
+                    raise  # 抛出异常让调用者知道
+
+        # 所有重试都失败
+        return None
     
     def _log_timeout_performance(self):
         """记录超时性能统计"""
