@@ -167,10 +167,23 @@ class BaseAIProvider(ABC):
                         signal = self.parse_response(response_data)
                         if signal:
                             logger.info(f"🤖 {self.config.name.upper()}回复: {signal.signal} (信心: {signal.confidence:.1f})")
+
                             # 添加AI理由输出，限制长度避免日志过长
-                            reason_preview = signal.reason[:150] + "..." if len(signal.reason) > 350 else signal.reason
-                            logger.info(f"📋 {self.config.name.upper()}理由: {reason_preview}")
+                            if signal.reason and len(signal.reason.strip()) > 0:
+                                reason_length = len(signal.reason)
+                                if reason_length > 200:
+                                    # 如果理由超过200字符，显示前180字符+...
+                                    reason_preview = signal.reason[:180] + "..."
+                                    logger.info(f"📋 {self.config.name.upper()}理由: {reason_preview} (完整长度: {reason_length}字符)")
+                                else:
+                                    # 如果理由较短，直接显示完整内容
+                                    logger.info(f"📋 {self.config.name.upper()}理由: {signal.reason}")
+                            else:
+                                logger.warning(f"⚠️ {self.config.name.upper()}返回了空理由")
+
                             return signal
+                        else:
+                            logger.warning(f"⚠️ {self.config.name} 解析响应失败，返回了None")
                     
                     # 如果失败且不是最后一次尝试，等待后重试
                     if attempt < max_retries:

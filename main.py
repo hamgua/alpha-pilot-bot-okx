@@ -114,10 +114,25 @@ class AlphaArenaBot:
         """初始化交易机器人"""
         self.state = BotState()
         self.data_manager = DataManager()
-        
+        self.strategy_selector = None
+
         log_info("🚀 Alpha Pilot Bot OKX 交易机器人初始化中...")
         self._display_startup_info()
-        
+
+        # 初始化策略选择器 - 显示INVESTMENT_TYPE配置
+        log_info("🎯 初始化策略选择器...")
+        self.strategy_selector = StrategySelector()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            success = loop.run_until_complete(self.strategy_selector.initialize())
+            if success:
+                log_info("✅ 策略选择器初始化完成")
+            else:
+                log_warning("⚠️ 策略选择器初始化失败，使用默认策略")
+        finally:
+            loop.close()
+
         # 初始化数据管理
         self._initialize_data_management()
     
