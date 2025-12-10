@@ -161,6 +161,22 @@ class BaseStrategy(BaseComponent):
                 logger.warning("信号对象无效或信号为空")
                 return False
 
+            # 记录信号到监控器（如果存在监控器）
+            try:
+                from monitor_low_confidence import monitor
+                current_price = market_data.get('price', 0)
+                monitor.add_signal(
+                    signal.signal,
+                    signal.confidence,
+                    signal.strategy_name,
+                    current_price
+                )
+            except ImportError:
+                # 如果监控器不存在，继续执行
+                pass
+            except Exception as e:
+                logger.debug(f"记录信号到监控器失败: {e}")
+
             # 验证信号类型
             if signal.signal not in ['BUY', 'SELL', 'HOLD']:
                 logger.warning(f"无效的信号类型: {signal.signal}")
@@ -252,6 +268,14 @@ class BaseStrategy(BaseComponent):
         try:
             logger.info(f"🚀 执行信号: {signal.signal} | 策略: {self.strategy_type} | 置信度: {signal.confidence:.2f}")
 
+            # 信心阈值检查 - 根据策略类型设置不同的最小信心值
+            min_confidence = self._get_min_confidence_threshold()
+
+            if signal.confidence < min_confidence:
+                logger.warning(f"⚠️ 信号信心过低 ({signal.confidence:.2f})，低于最小阈值 ({min_confidence:.2f})，跳过交易执行")
+                logger.info(f"💡 建议: AI信心不足，等待更高信心的交易信号")
+                return False
+
             # 获取交易引擎
             from trading.engine import trading_engine
 
@@ -326,6 +350,22 @@ class BaseStrategy(BaseComponent):
         except Exception as e:
             logger.error(f"执行卖出信号失败: {e}")
             return False
+
+    def _get_min_confidence_threshold(self) -> float:
+        """获取策略的最小信心阈值 - 根据策略风险等级动态设置"""
+        # 根据策略类型和风险等级返回不同的信心阈值
+        # 保守策略：要求高信心（0.6+）
+        # 中等策略：中等信心（0.4+）
+        # 激进策略：可以低信心（0.3+）
+
+        confidence_thresholds = {
+            'conservative': 0.60,  # 保守策略要求高信心
+            'moderate': 0.40,       # 中等策略中等信心
+            'aggressive': 0.30      # 激进策略可以更低信心
+        }
+
+        # 默认使用保守阈值
+        return confidence_thresholds.get(self.strategy_type, 0.50)
 
 class ConservativeStrategy(BaseStrategy):
     """保守型策略"""
