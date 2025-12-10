@@ -215,7 +215,7 @@ class ConfigManager:
                 'conservative': {
                     'enabled': True,
                     'name': '稳健型策略',
-                    'description': '适合80%交易者，低风险，稳定盈利 - 基于15分钟K线，保守仓位管理，严格止损',
+                    'description': '适合80%交易者，低风险，稳定盈利 - 基于15分钟K线，保守仓位管理，严格止损（优化）',
                     'kline_period': '15m',  # 主要使用15分钟K线
                     'trend_indicators': ['MA20', 'MA60', 'MACD', 'RSI'],
                     'volatility_threshold': 0.012,  # 波动宽度 1.2%
@@ -226,18 +226,20 @@ class ConfigManager:
                     'consolidation_close_ratio': 1.0,  # 横盘全平仓
                     'position_sizing': 'conservative',  # 保守仓位管理
                     'min_trade_amount': 0.001,  # 最小交易量
-                    'max_leverage': 5,  # 最大杠杆倍数
+                    'max_leverage': 5,  # 最大杠杆倍数（保持低杠杆）
                     'risk_reward_ratio': 2.2,  # 风险收益比
                     'consolidation_protection': True,  # 启用横盘保护
-                    'use_volume_confirmation': True,  # 使用成交量确认
-                    'max_daily_trades': 3,  # 最大日交易次数
-                    'min_position_hold_time': 30,  # 最小持仓时间(分钟)
+                    'use_volume_confirmation': False,  # 禁用成交量确认（提高执行速度）
+                    'max_daily_trades': 8,  # 降低最大日交易次数（保守策略=更少交易）
+                    'min_position_hold_time': 20,  # 降低最小持仓时间到20分钟（比中等策略保守）
                     'market_condition_filter': 'all',  # 适用所有市场条件
-                    'signal_confirmation': 'strict',  # 严格信号确认
+                    'signal_confirmation': 'fast',  # 快速信号确认（提高响应）
+                    'trend_strength_threshold': 0.5,  # 趋势强度阈值（中等保守）
+                    'min_confidence_threshold': 0.35,  # 添加：最小置信度阈值0.35（比中等策略保守）
+                    'allow_partial_execution': True,  # 添加：允许部分执行
                     # 新增：完全符合设计文档的行为逻辑参数
                     'initial_position_ratio': 0.3,  # 初始仓位30%（20-40%范围）
                     'add_position_ratio': 0.0,  # 不加仓
-                    'trend_strength_threshold': 0.0,  # 趋势强度阈值（不适用）
                     'use_trailing_stop': False,  # 不使用移动止盈
                     'trailing_stop_pct': 0.0,  # 移动止盈百分比
                     'consolidation_volatility_threshold': 0.01,  # 横盘波动阈值1%
@@ -247,7 +249,7 @@ class ConfigManager:
                 'moderate': {
                     'enabled': True,
                     'name': '中等型策略',
-                    'description': '趋势/波段交易，中等风险，抓趋势 - 基于10分钟K线，趋势跟随，波段操作',
+                    'description': '趋势/波段交易，中等风险，抓趋势 - 基于10分钟K线，趋势跟随，波段操作（优化）',
                     'kline_period': '10m',  # 主要使用10分钟K线
                     'trend_indicators': ['MA20', 'MA120', 'MACD', 'RSI', 'Bollinger'],
                     'volatility_threshold': 0.015,  # 波动宽度 1.5%
@@ -258,15 +260,17 @@ class ConfigManager:
                     'consolidation_close_ratio': 0.75,  # 横盘部分平仓75%
                     'position_sizing': 'moderate',  # 中等仓位管理
                     'min_trade_amount': 0.001,  # 最小交易量
-                    'max_leverage': 10,  # 最大杠杆倍数
+                    'max_leverage': 5,  # 降低杠杆到5倍（增加交易频率 = 降低单次风险）
                     'risk_reward_ratio': 2.6,  # 风险收益比
                     'consolidation_protection': True,  # 启用横盘保护
-                    'use_volume_confirmation': True,  # 使用成交量确认
-                    'max_daily_trades': 5,  # 最大日交易次数
-                    'min_position_hold_time': 60,  # 最小持仓时间(分钟)
-                    'market_condition_filter': 'trending',  # 适用于趋势市场
-                    'signal_confirmation': 'moderate',  # 中等信号确认
-                    'trend_strength_threshold': 0.6,  # 趋势强度阈值
+                    'use_volume_confirmation': False,  # 禁用成交量确认（提高执行速度）
+                    'max_daily_trades': 20,  # 最大日交易次数（15分钟周期，2小时交易窗口）
+                    'min_position_hold_time': 15,  # 降低最小持仓时间到15分钟
+                    'market_condition_filter': 'all',  # 适用于所有市场条件
+                    'signal_confirmation': 'fast',  # 快速信号确认
+                    'trend_strength_threshold': 0.4,  # 降低趋势强度阈值到0.4
+                    'min_confidence_threshold': 0.3,  # 添加：最小置信度阈值0.3
+                    'allow_partial_execution': True,  # 添加：允许部分执行
                     'add_position_on_trend': True,  # 趋势确认后加仓
                     # 新增：完全符合设计文档的行为逻辑参数
                     'initial_position_ratio': 0.55,  # 初始仓位55%（50-60%范围）
@@ -280,7 +284,7 @@ class ConfigManager:
                 'aggressive': {
                     'enabled': True,
                     'name': '激进型策略',
-                    'description': '单边强趋势，高风险，最大化收益 - 基于5分钟K线，高频交易，强趋势捕捉',
+                    'description': '单边强趋势，高风险，最大化收益 - 基于5分钟K线，高频交易，强趋势捕捉（优化）',
                     'kline_period': '5m',  # 主要使用5分钟K线
                     'trend_indicators': ['EMA5', 'EMA20', 'EMA60', 'RSI', 'ATR'],
                     'volatility_threshold': 0.02,  # 波动宽度 2%
@@ -291,19 +295,21 @@ class ConfigManager:
                     'consolidation_close_ratio': 0.3,  # 横盘减仓30%
                     'position_sizing': 'aggressive',  # 激进仓位管理
                     'min_trade_amount': 0.001,  # 最小交易量
-                    'max_leverage': 20,  # 最大杠杆倍数
+                    'max_leverage': 15,  # 降低杠杆到15倍（控制风险）
                     'risk_reward_ratio': 5.0,  # 风险收益比
                     'consolidation_protection': False,  # 禁用横盘保护
-                    'use_volume_confirmation': False,  # 不依赖成交量确认
-                    'max_daily_trades': 10,  # 最大日交易次数
-                    'min_position_hold_time': 5,  # 最小持仓时间(分钟)
-                    'market_condition_filter': 'strong_trend',  # 适用于强趋势市场
+                    'use_volume_confirmation': True,  # 启用成交量确认（高频需要确认）
+                    'max_daily_trades': 40,  # 提高最大日交易次数到40次（更激进）
+                    'min_position_hold_time': 5,  # 保持最小持仓时间5分钟
+                    'market_condition_filter': 'trending',  # 从'strong_trend'改为'trending'（扩大范围）
                     'signal_confirmation': 'fast',  # 快速信号确认
-                    'trend_strength_threshold': 0.8,  # 趋势强度阈值
+                    'trend_strength_threshold': 0.7,  # 降低趋势强度阈值到0.7（更容易触发）
                     'use_trailing_stop': True,  # 使用移动止盈
                     'trailing_stop_pct': 0.03,  # 移动止盈3%
                     'pyramiding': True,  # 允许金字塔加仓
                     'max_pyramid_levels': 3,  # 最大金字塔层数
+                    'min_confidence_threshold': 0.25,  # 添加：最小置信度阈值0.25（比中等策略更激进）
+                    'allow_partial_execution': True,  # 添加：允许部分执行
                     # 新增：完全符合设计文档的行为逻辑参数
                     'initial_position_ratio': 0.7,  # 初始仓位70%（60-80%范围）
                     'add_position_ratio': 0.25,  # 加仓25%（趋势越强越加仓）
@@ -378,9 +384,9 @@ class ConfigManager:
     
     def _load_ai_config(self) -> Dict[str, Any]:
         """AI配置 - 人工智能信号生成相关设置
-        
+
         配置AI信号生成相关的参数，包括API密钥、超时设置、缓存等
-        
+
         Returns:
             Dict[str, Any]: AI配置字典
         """
@@ -390,7 +396,7 @@ class ConfigManager:
             cache_duration = int(os.getenv('AI_CACHE_DURATION', '900'))
             timeout = int(os.getenv('AI_TIMEOUT', '30'))
             max_retries = int(os.getenv('AI_MAX_RETRIES', '2'))
-            min_confidence = float(os.getenv('AI_MIN_CONFIDENCE', '0.5'))
+            min_confidence = float(os.getenv('AI_MIN_CONFIDENCE', '0.3'))  # 从0.5降低到0.3，提高交易敏感度
             ai_provider = os.getenv('AI_PROVIDER', 'kimi')
             fusion_providers = os.getenv('AI_FUSION_PROVIDERS', 'deepseek,kimi')
             

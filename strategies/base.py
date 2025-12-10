@@ -195,14 +195,42 @@ class BaseStrategy(BaseComponent):
     async def _validate_strategy_specific(self, signal: StrategySignal, market_data: Dict[str, Any]) -> bool:
         """策略特定的验证逻辑 - 子类可以重写"""
         try:
-            # 保守策略：只允许高置信度信号（HOLD信号除外）
-            if self.strategy_type == 'conservative' and signal.confidence < 0.7:
-                # HOLD信号允许低置信度，因为不触发交易
-                if signal.signal == 'HOLD':
-                    logger.info(f"保守策略接受HOLD信号（不触发交易）: 置信度={signal.confidence}")
-                else:
-                    logger.info(f"保守策略拒绝低置信度交易信号: {signal.signal} (置信度: {signal.confidence})")
+            # 获取策略配置的最小置信度阈值（所有策略都从配置读取）
+            min_confidence = 0.3  # 默认最小置信度（用于moderate）
+
+            # 根据策略类型设置不同的默认阈值和日志前缀
+            if self.strategy_type == 'conservative':
+                min_confidence = 0.35  # 保守策略默认0.35
+                strategy_name = "稳健型"
+            elif self.strategy_type == 'moderate':
+                min_confidence = 0.3  # 中等策略默认0.3
+                strategy_name = "中等型"
+            elif self.strategy_type == 'aggressive':
+                min_confidence = 0.25  # 激进策略默认0.25
+                strategy_name = "激进型"
+            else:
+                strategy_name = self.strategy_type
+
+            # 如果配置中有明确设置，则使用配置值
+            if hasattr(self.config, 'parameters') and 'min_confidence_threshold' in self.config.parameters:
+                config_threshold = self.config.parameters['min_confidence_threshold']
+                logger.info(f"从配置加载{strategy_name}策略置信度阈值: {config_threshold}")
+                min_confidence = config_threshold
+
+            # HOLD信号总是接受（不触发交易）
+            if signal.signal == 'HOLD':
+                logger.info(f"✅ {strategy_name}策略接受HOLD信号（不触发交易）: 置信度={signal.confidence}")
+                return True
+
+            # 验证交易信号的置信度
+            if signal.signal in ['BUY', 'SELL']:
+                if signal.confidence < min_confidence:
+                    logger.info(f"⛔ {strategy_name}策略拒绝低置信度{signal.signal}信号: "
+                              f"{signal.confidence:.2f} < 阈值: {min_confidence:.2f}")
                     return False
+                else:
+                    logger.info(f"✅ {strategy_name}策略接受{signal.signal}信号: "
+                              f"{signal.signal} (置信度: {signal.confidence:.2f} >= 阈值: {min_confidence:.2f})")
 
             # 检查市场数据完整性 - 放宽要求，technical_data 可选
             if 'price' not in market_data:
@@ -213,8 +241,6 @@ class BaseStrategy(BaseComponent):
             if 'technical_data' not in market_data:
                 logger.info("市场数据缺少 technical_data 字段，继续验证（可选字段）")
 
-            # 记录验证通过的详细信息
-            logger.info(f"信号验证通过: {signal.signal} | 策略: {self.strategy_type} | 置信度: {signal.confidence}")
             return True
 
         except Exception as e:

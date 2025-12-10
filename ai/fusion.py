@@ -226,10 +226,10 @@ class SignalFusionEngine(BaseComponent):
         sell_ratio = sell_votes / total_signals
         hold_ratio = hold_votes / total_signals
         
-        # 🚀 增强决策逻辑
-        majority_threshold = 0.5
-        strong_consensus_threshold = 0.7
-        weak_consensus_threshold = 0.6
+        # 🚀 增强决策逻辑 - 优化加密货币市场敏感度
+        majority_threshold = 0.4  # 从0.5降低到0.4，更容易达成共识
+        strong_consensus_threshold = 0.6  # 从0.7降低到0.6
+        weak_consensus_threshold = 0.5  # 从0.6降低到0.5
         
         # 🔥 动态信心调整
         confidence_adjustment = self._calculate_dynamic_confidence_adjustment(market_data)
